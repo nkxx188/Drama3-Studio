@@ -15,7 +15,8 @@ def test_archive_omits_top_level_user_data_but_keeps_dependency_diagnostics(tmp_
                  ".cache/private.bin", "checkpoints/nested/drama3.gguf", "logs/private.log",
                  "personal-reference.wav", "extra-models/weights.safetensors", ".env",
                  "ui/.env.local", "runtime/python/Lib/site-packages/example/diagnostics/__init__.py",
-                 "runtime/python/Lib/site-packages/example/__pycache__/cached.pyc", "start.bat"):
+                 "runtime/python/Lib/site-packages/example/__pycache__/cached.pyc", "start.bat",
+                 "README.md", "README.zh-CN.md"):
         target = folder / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"fixture")
@@ -24,7 +25,9 @@ def test_archive_omits_top_level_user_data_but_keeps_dependency_diagnostics(tmp_
         names = archive.namelist()
         assert "Portable With Spaces/runtime/python/Lib/site-packages/example/diagnostics/__init__.py" in names
         assert "Portable With Spaces/start.bat" in names
-        assert len(names) == 2
+        assert "Portable With Spaces/README.md" in names
+        assert "Portable With Spaces/README.zh-CN.md" in names
+        assert len(names) == 4
 
 
 def test_archive_does_not_follow_application_links_to_external_files(tmp_path):
@@ -84,6 +87,7 @@ def test_refresh_retires_extra_launchers_preserves_data_and_copies_current_app(t
         "start.bat": "current launcher",
         "requirements-windows.txt": "dependencies",
         "README.md": "project introduction and installation",
+        "README.zh-CN.md": "Chinese introduction and installation",
         "docs/development.md": "source and build instructions",
         "docs/release-preparation.md": "release verification",
         "LICENSE": "MIT for original project material",
@@ -111,7 +115,7 @@ def test_refresh_retires_extra_launchers_preserves_data_and_copies_current_app(t
     assert (package / "runtime/native/worker.exe").read_text() == "current worker"
     assert "Download a supported model from Studio Settings" in (
         package / "START-HERE.txt").read_text(encoding="utf-8")
-    for name in ("README.md", "docs/development.md", "docs/release-preparation.md",
+    for name in ("README.md", "README.zh-CN.md", "docs/development.md", "docs/release-preparation.md",
                  "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         assert (package / name).read_text(encoding="utf-8") == (project / name).read_text(encoding="utf-8")
     for name in ("ui_data/settings.json", "outputs/keep.wav", "checkpoints/keep.gguf", ".cache/keep.bin"):

@@ -29,7 +29,7 @@ RETIRED_UI_ASSETS = ("ui/fish-audio-logo.svg", "ui/audio-mark.svg")
 PACKAGE_DIRECTORIES = frozenset(("src", "ui", "vendor", "tools", "runtime", "licenses", "docs"))
 PACKAGE_FILES = frozenset((
     "start.bat", "requirements-windows.txt", "START-HERE.txt", "package.json",
-    "README.md", "NOTICE", "THIRD_PARTY_NOTICES.md", "LICENSE", "LICENSE.txt",
+    "README.md", "README.zh-CN.md", "NOTICE", "THIRD_PARTY_NOTICES.md", "LICENSE", "LICENSE.txt",
 ))
 
 
@@ -62,7 +62,7 @@ def refresh_application(destination):
         (destination / name).unlink(missing_ok=True)
     for name in ("start.bat", "requirements-windows.txt"):
         copy_changed(ROOT / name, destination / name)
-    for name in ("README.md", "NOTICE", "THIRD_PARTY_NOTICES.md", "LICENSE", "LICENSE.txt"):
+    for name in ("README.md", "README.zh-CN.md", "NOTICE", "THIRD_PARTY_NOTICES.md", "LICENSE", "LICENSE.txt"):
         if (ROOT / name).is_file():
             copy_changed(ROOT / name, destination / name)
     for name in ("development.md", "release-preparation.md"):

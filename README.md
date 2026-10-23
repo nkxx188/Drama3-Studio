@@ -1,108 +1,110 @@
 # Drama 3 Studio
 
-**在 Windows 本地使用 Fish Audio Drama 3，完成语音生成、声音克隆、多人对话和音频编辑。**
+**English** | [简体中文](README.zh-CN.md)
+
+**Run Fish Audio Drama 3 locally on Windows for speech generation, voice cloning, multi-speaker dialogue, and audio editing.**
 
 Built with Fish Audio.
 
-Drama 3 Studio 将模型推理、参考音频、剧本编辑和生成结果整理在同一个 WebUI 中，提供自带运行环境的 Windows NVIDIA 一键包。模型权重单独下载，日常使用无需配置 Python、Node.js 或 CUDA Toolkit。
+Drama 3 Studio brings model inference, voice references, script editing, and generated audio into one WebUI. The Windows NVIDIA portable package includes its own runtime, so normal use requires no separate Python, Node.js, or CUDA Toolkit setup. Model weights are downloaded separately.
 
-## 功能
+## Features
 
-- **语音生成与克隆**：上传参考音频，填写或修改对应文字，生成新的台词；也可从音色库选择已保存的声音。
-- **多人对话**：给说话人分配声音，编写带角色标记的对话；支持整段联合生成，以及逐段生成后拼接。
-- **声音设计**：用自然语言描述想要的声音，生成后可用作参考音频。
-- **音频编辑**：在独立编辑页面修改整段表达，或选择需要重新生成的音频片段。
-- **剧本控制**：插入演绎标签、停顿和说话人标记，使用自然语言补充演绎要求。
-- **本地管理**：保存音色，查看生成历史，直接播放和下载结果；支持添加其他位置的模型文件夹。
-- **模型下载**：在设置中选择模型版本和下载渠道，支持并行下载、断点续传及完整性校验。
-- **可选参考音频转写**：检测到本地 ASR 模型时自动转写，文字保持可编辑；也可手动填写。
-- **多语言界面**：简体中文、English、日本語、한국어。
+- **Speech generation and cloning:** upload reference audio, enter or edit its transcript, and generate new lines; you can also choose a saved voice from the voice library.
+- **Multi-speaker dialogue:** assign voices to speakers and write dialogue with speaker markers. Generate an entire conversation jointly, or generate individual turns and combine them.
+- **Voice design:** describe the voice you want in natural language, then use the generated audio as a voice reference.
+- **Audio editing:** revise an entire recording or regenerate a selected section in a dedicated editor.
+- **Script controls:** insert delivery tags, pauses, and speaker markers, and add natural-language performance instructions.
+- **Local management:** save voices, browse generation history, play and download results, and add model folders from other locations.
+- **Model downloads:** choose a model and download source in Settings, with parallel downloads, resume support, and integrity checks.
+- **Optional reference transcription:** automatically transcribe reference audio when a local ASR model is available. Transcripts remain editable and can also be entered manually.
+- **Multilingual interface:** Simplified Chinese, English, Japanese, and Korean.
 
-这是基于 Fish Audio Drama 3 构建的第三方本地工具。语音能力和模型权重由上游模型提供。
+This is a third-party local application built around Fish Audio Drama 3. Speech capabilities and model weights are provided by the upstream model.
 
-## Windows 一键包
+## Windows Portable Package
 
-1. 下载并完整解压 Windows NVIDIA 一键包，放在有写入权限、空间充足的本地目录，建议使用 SSD。
-2. 双击 **`start.bat`**，浏览器会打开 Studio。使用期间保持启动窗口开启。
-3. 打开 **设置 → 下载模型**，选择版本和渠道，下载完成后在“可用模型”中选择并点击“使用此模型”。已有完整模型时，也可直接放入 `checkpoints`，或添加其他模型文件夹。
-4. 在页面顶部选择模型，上传参考音频或从音色库选取，输入要生成的文本并生成。
+1. Download the [Windows NVIDIA portable package from Releases](https://github.com/nkxx188/Drama3-Studio/releases) and fully extract it to a writable local folder with enough free space. An SSD is recommended.
+2. Double-click **`start.bat`** to open Studio in your browser. Keep the launcher window open while using it.
+3. Go to **Settings → Download a model** and choose a model and source. Once downloaded, select it under **Available models** and click **Use this model**. If you already have a complete model, place it under `checkpoints` or add its existing folder.
+4. Select a model at the top of the page, upload reference audio or choose a voice from the library, enter your text, and generate.
 
-默认地址为 `http://127.0.0.1:8879/`。端口被占用时会自动选择其他本地端口；再次运行启动脚本会打开当前这份程序已有的页面。
+The default address is `http://127.0.0.1:8879/`. If the port is occupied, the launcher automatically chooses another local port. Running the launcher again opens the existing instance of this installation.
 
-若发布文件采用 `.zip.001`、`.zip.002` 等分卷形式，请下载全部分卷放在同一文件夹，用 7-Zip 打开 `.zip.001` 并解压。完整的单文件 ZIP 则可直接解压。
+For split archives named `.zip.001`, `.zip.002`, and so on, download **all volumes** into the same folder, then open `.zip.001` with **7-Zip** and extract the package. A complete, single-file ZIP can be extracted directly.
 
-### 下载模型
+### Download Models
 
-设置页提供 FP8 / BF16、INT4、INT8 ConvRot、W6A8、W4A8 和多种 GGUF 版本。下载器会准备对应版本所需的配套文件，下载目标位于一键包的 `checkpoints` 中。
+Settings offers FP8 / BF16, INT4, INT8 ConvRot, W6A8, W4A8, and several GGUF variants. The downloader prepares the supporting files required by each variant and installs them under the portable package's `checkpoints` folder.
 
-- FP8 / BF16 和 INT4 提供 Hugging Face、魔搭 ModelScope 两种渠道，也可自动测速选择。
-- 其他列出的量化版本目前仅提供 Hugging Face 渠道，下载前需要确保当前网络或代理可以访问该渠道。渠道是否可选以界面显示为准。
-- 下载区显示连接、下载和校验状态，以及下载进度、大小和速度。中断或取消后，再次选择同一版本下载即可续传已完成的分块。
+- FP8 / BF16 and INT4 offer both Hugging Face and ModelScope sources, with an automatic speed-test option.
+- Other listed quantized variants currently offer Hugging Face only. Make sure your network or proxy can access the selected source. The UI shows which sources are available for each model.
+- The download panel shows connection, download, and verification status, along with progress, size, and speed. After an interruption or cancellation, choose the same model again to resume using previously completed chunks.
 
-手动下载或使用其他工具中已有的模型时，请保留该版本要求的目录结构和配套文件。单个模型文件能否直接使用，取决于其格式及配套文件是否完整。
+When downloading manually or using models from another tool, preserve the directory structure and supporting files required by that variant. Whether a single model file works directly depends on its format and the availability of its supporting files.
 
-### 模型放在哪里
+### Model Locations
 
-默认只需要一键包内的一个 `checkpoints` 文件夹。程序会扫描其中的子目录，不必把每个模型目录逐个添加进去。
+The default `checkpoints` folder is the only model location you need. Studio scans its subfolders automatically; you do not need to add each model directory individually.
 
 ```text
 Drama3 Studio/
 ├─ start.bat
 ├─ checkpoints/
-│  ├─ 模型 A/
-│  └─ 模型 B/
+│  ├─ model-a/
+│  └─ model-b/
 ├─ runtime/
 └─ ...
 ```
 
-已经在其他工具中保存模型时，可在 **设置 → 模型位置** 添加那个文件夹。新增位置和默认目录共用同一个模型列表，不会复制或移动原有模型。不同格式需要的配套文件，以对应模型的说明为准。
+If you already keep models elsewhere, add that folder under **Settings → Model locations**. Models from additional locations and the default folder appear in one shared list. Existing model files are not copied or moved. Check each model's instructions for its required supporting files.
 
-支持的模型格式包括原版 FP8 / BF16、INT4 / W4A16、INT8、W6A8、W4A8，以及兼容的 GGUF 模型。模型格式、量化方式和机器的内存配置都会影响速度、资源占用及生成表现。
+Supported formats include the original FP8 / BF16 model, INT4 / W4A16, INT8, W6A8, W4A8, and compatible GGUF models. Format, quantization, and system memory configuration affect speed, resource use, and generated audio.
 
-### 运行环境
+### Requirements
 
-- Windows x64，NVIDIA 显卡，支持 AVX2 的处理器，以及与运行环境兼容的 NVIDIA 驱动。
-- 一键包包含 Python、所需 Python 依赖和 CUDA 运行库。
-- 原生后端包含面向 RTX 20 / 30 / 40 / 50 系列的编译目标；完整实机验证环境为 **RTX 4070 Laptop，8 GB 显存**，其他硬件仍需实际验证。
-- 内存和磁盘需求取决于模型。低显存运行会把部分模型数据放在内存或映射文件中，不能只根据显存容量估算整机需求。
+- Windows x64, an NVIDIA GPU, an AVX2-capable CPU, and a compatible NVIDIA driver.
+- The portable package includes Python, the required Python dependencies, and CUDA runtime libraries.
+- The native backend includes compilation targets for RTX 20 / 30 / 40 / 50 series GPUs. Full hardware validation was performed on an **RTX 4070 Laptop GPU with 8 GB VRAM**; other hardware still needs validation.
+- RAM and storage requirements depend on the model. Low-VRAM operation keeps some model data in system RAM or memory-mapped files, so VRAM capacity alone does not determine the system requirements.
 
-### 参考音频与转写
+### Reference Audio and Transcription
 
-参考音频应包含清晰的人声，转写文字应与音频实际内容一致。自动转写使用单独的 Qwen3-ASR-0.6B 模型；未安装时仍可手动填写，不影响使用参考音频。
+Use reference audio with clear speech and a transcript that matches what is actually said. Automatic transcription uses a separate Qwen3-ASR-0.6B model. Without it, you can enter the transcript manually and still use reference audio normally.
 
-转写模型的默认位置为 `checkpoints/Qwen3-ASR-0.6B-hf`，也可通过 `DRAMA_ASR_MODEL_DIR` 指定本地原生 Transformers 格式模型。ASR 模型不属于语音生成模型列表。
+The default transcription model location is `checkpoints/Qwen3-ASR-0.6B-hf`. You can also set `DRAMA_ASR_MODEL_DIR` to a local model in the native Transformers format. ASR models do not appear in the speech generation model list.
 
-### 首次生成与释放资源
+### First Generation and Releasing Resources
 
-打开页面或恢复草稿不会提前加载生成模型。首次点击生成时，程序才会加载模型并准备参考音频，因此首次任务的等待时间通常更长。模型驻留期间会继续复用缓存，更换参考音频时可自动预热。
+Opening the page or restoring a draft does not load the generation model. The model loads and prepares the voice reference when you first generate, so the first task usually takes longer. While the model remains loaded, Studio reuses its caches and can automatically warm up new references.
 
-暂时不再生成时，可点击右上角刷新按钮左侧的插头图标，悬停提示为 **“释放资源”**。程序会取消预热、卸载生成模型并清理其缓存，保留模型文件、音色、草稿和历史记录；下次生成会重新加载。生成任务进行中需要先完成或取消任务。
+When you are done generating for a while, click the plug icon to the left of Refresh in the top-right corner. Its tooltip reads **Release resources**. Studio cancels warm-up, unloads the generation model, and clears its caches while preserving model files, voices, drafts, and history. The next generation loads the model again. Finish or cancel any running generation task before releasing resources.
 
-### 更新与排查
+### Updates and Troubleshooting
 
-模型、音色、草稿、生成记录和缓存保存在本地。更新前备份自己的 `checkpoints`、`ui_data` 和 `outputs`，再按发布说明更新程序文件。
+Models, voices, drafts, generation history, and caches are stored locally. Before updating, back up your `checkpoints`, `ui_data`, and `outputs` folders, then follow the release instructions to update the application files.
 
-启动窗口显示服务和任务状态；详细日志保存在 `diagnostics`。遇到问题时，可在设置页导出诊断日志，或在终端执行 `start.bat --diagnostics`。
+The launcher window shows service and task status; detailed logs are stored under `diagnostics`. For troubleshooting, export diagnostics from Settings or run `start.bat --diagnostics` in a terminal.
 
-## 从源码运行与构建
+## Run from Source and Build
 
-GitHub 仓库提供程序源码、前端资源、依赖版本、上游补丁及构建脚本，**不包含完整模型权重、Python 运行环境、CUDA 二进制库或用户音频**。仓库保留一个约 4 KiB 的任务控制输出行，供部分量化版本配套使用，其来源和许可见 [NOTICE](NOTICE)。
+The repository contains application source, frontend assets, dependency versions, upstream patches, and build scripts. It **does not include complete model weights, a Python runtime, CUDA binaries, or user audio**. A roughly 4 KiB task-control output row is retained as a supporting file for some quantized variants; see [NOTICE](NOTICE) for its source and license.
 
-源码运行与打包步骤见 [开发与构建](docs/development.md)。仅下载 GitHub 的 Source code ZIP 并不能直接获得完整的一键包。
+See the [development and build guide (Chinese)](docs/development.md) for source setup and packaging instructions. GitHub's **Source code** ZIP is not the complete, ready-to-run portable package.
 
-## 项目与作者
+## Project and Author
 
-作者：**那颗星星188**。如果这个工具对你有帮助，欢迎关注，了解后续更新。
+Created by **nkxx188 / 那颗星星188**. If you find Studio useful, follow the author for updates.
 
-- [B站 · 关注作者](https://b23.tv/86MY5Ia)
-- [Fish Audio 官方服务](https://fish.audio/?fpr=nkxx188)
-- [YouTube · 关注作者](https://www.youtube.com/@nkxx-188)
-- [GitHub · 源码与反馈](https://github.com/nkxx188/Drama3-Studio)
+- [Bilibili · Follow the author](https://b23.tv/86MY5Ia)
+- [Fish Audio · Official service](https://fish.audio/?fpr=nkxx188)
+- [YouTube · Follow the author](https://www.youtube.com/@nkxx-188)
+- [GitHub · Source and feedback](https://github.com/nkxx188/Drama3-Studio)
 
-## 上游与许可
+## Credits and Licenses
 
-感谢 [Fish Audio / Fish Speech](https://github.com/fishaudio/fish-speech)、[audio.cpp](https://github.com/0xShug0/audio.cpp)、[ggml](https://github.com/ggml-org/ggml)、CodeMirror、Lucide 及其他依赖项目。
+Thanks to [Fish Audio / Fish Speech](https://github.com/fishaudio/fish-speech), [audio.cpp](https://github.com/0xShug0/audio.cpp), [ggml](https://github.com/ggml-org/ggml), CodeMirror, Lucide, and the other dependencies that make this project possible.
 
-本项目作者原创并拥有版权的部分使用 [MIT License](LICENSE)。该许可不覆盖第三方或改编代码：例如，[codec.py](src/drama_low_vram/codec.py) 改编自 Fish Speech，仍受 Fish Audio Community License 约束；基于 audio.cpp 的原生修改继续遵循其 Apache-2.0 许可义务。
+Original material owned by this project's author is licensed under the [MIT License](LICENSE). This does not cover third-party or adapted code. For example, [codec.py](src/drama_low_vram/codec.py) is adapted from Fish Speech and remains subject to the Fish Audio Community License. Native modifications based on audio.cpp retain their Apache-2.0 license obligations.
 
-其他第三方代码、图标和运行库遵循各自许可，详见 [第三方说明](THIRD_PARTY_NOTICES.md) 和 [NOTICE](NOTICE)。完整模型权重单独下载；使用模型前请阅读对应模型附带的许可。
+Other third-party code, icons, and runtime libraries retain their respective licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [NOTICE](NOTICE). Complete model weights are downloaded separately. Read each model's license before using it.
