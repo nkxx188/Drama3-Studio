@@ -1,0 +1,607 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "fp8",
+      "label": "Official FP8 / BF16",
+      "format": "FP8",
+      "target": "drama-3-fp8",
+      "kind": "official",
+      "repo": "fishaudio/drama-3",
+      "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+      "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2",
+      "sources": [
+        "huggingface",
+        "modelscope"
+      ],
+      "files": [
+        {
+          "name": ".gitattributes",
+          "size": 2197,
+          "sha256": "be3062e448b5c6faeb638f985aaeb03c2df87b13a8e79fceb3311c5bb557e24b",
+          "huggingface_compatible": false
+        },
+        {
+          "name": "LICENSE",
+          "size": 19685,
+          "sha256": "733a32442087acbda12ecafe8e71eb8ee5890c89b50ce7ac4ea3777faa3c823e",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "README.md",
+          "size": 7583,
+          "sha256": "611b5578a019b0b2bd67f9b5133cf54f462861dab5bcdd3b5789d4de9acb3990",
+          "huggingface_compatible": false
+        },
+        {
+          "name": "chat_template.jinja",
+          "size": 7756,
+          "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "codec.pth",
+          "size": 1871099728,
+          "sha256": "74fc41c5a7151c6f350af8bd7e5d6e3accfcc7f3dfbfac23afd35af07052bb2f",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "config.json",
+          "size": 5535,
+          "sha256": "4b13a31b504cf54181f52df5bbb27604f5cc4b77b6e90a12ab85d62e0d70b693",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "configuration.json",
+          "size": 72,
+          "sha256": "30458d769bcf25aa4e8fd30bbde901f817e382a49f7c7da8c4380dd97b616876",
+          "huggingface_compatible": false
+        },
+        {
+          "name": "model-00001-of-00008.safetensors",
+          "size": 5000202800,
+          "sha256": "e486b4f438d0b2df28846e41e599bd2077a64a825893ed0371b332a40dc4b49b",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00002-of-00008.safetensors",
+          "size": 5000496824,
+          "sha256": "a67b726fe950ad57ebc15696009bde4a7dbbdc3645b42fa7d77e3a5fa1d70262",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00003-of-00008.safetensors",
+          "size": 5000988520,
+          "sha256": "acfdeb67b8c4cb4784d887339e85bddbc5d7b9be3bbee82e40fa10ffe305d965",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00004-of-00008.safetensors",
+          "size": 5000496392,
+          "sha256": "fa2960bddf128f51c3d4d74a1a942e34f61cc7ea294d10aec27f79dc10455c9f",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00005-of-00008.safetensors",
+          "size": 5000227096,
+          "sha256": "a49ed8717c47e12b354a711c71ecde8be153bad704ca0a25d4805534f4405971",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00006-of-00008.safetensors",
+          "size": 4984792768,
+          "sha256": "8867c0e3d600ebf28cf4734fc433dc98061fb990940e07b192ec0356ba1ff223",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00007-of-00008.safetensors",
+          "size": 4977946704,
+          "sha256": "51e7d473f8a270bf79b2896a6ea4f19162eeec5b1ea1c5a2ba7dc7750511dbda",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00008-of-00008.safetensors",
+          "size": 4638423240,
+          "sha256": "c5b065cce3b3b851369dfdb5a3b60f6abf2699121071c2b1a9dfd84acb7b8f7d",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model.safetensors.index.json",
+          "size": 6880197,
+          "sha256": "7a2d824d4b073963a816f0d7e3b2e33bac89ae10c691bf8652325e61abc9f5c0",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "special_tokens_map.json",
+          "size": 102779,
+          "sha256": "08aed9e321dc05275ac68cf883bfa96006b3fc09ff5cccadf262b6bce0873adb",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "tokenizer.json",
+          "size": 20791070,
+          "sha256": "0e9b9db76b2f0389b04b6ef057a2ac3b89100b7e96f2dd7034d19580a09654d6",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "tokenizer_config.json",
+          "size": 103580,
+          "sha256": "00e800279d8436c324b924e97872c7eacd2b19406aa0fe71eeb557b4cd53aa3e",
+          "huggingface_compatible": true
+        }
+      ]
+    },
+    {
+      "id": "int4",
+      "label": "INT4",
+      "format": "INT4 / W4A16",
+      "target": "drama-3-int4",
+      "kind": "int4",
+      "repo": "fishaudio/drama-3-int4",
+      "revision": "master",
+      "hf_revision": "a6f588691a13b6607cb09f9800556487ab7aa0fe",
+      "sources": [
+        "huggingface",
+        "modelscope"
+      ],
+      "files": [
+        {
+          "name": "LICENSE",
+          "size": 19685,
+          "sha256": "733a32442087acbda12ecafe8e71eb8ee5890c89b50ce7ac4ea3777faa3c823e",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "README.md",
+          "size": 8972,
+          "sha256": "d3e0f8c13f2425ef81e9c5e026bc70d3c1e4779413b655c6ce69c5ed70e5b843",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "UPSTREAM_PR.md",
+          "size": 2141,
+          "sha256": "2728936887aa4682f479958c571f94196752406ac2b5fa60e1ecc0dc9fc17380",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "apply_patch.py",
+          "size": 5743,
+          "sha256": "19a408c8e56d3dec4103fbc9fe507098a0dbd05fb74cf37a46b27a80b089d42a",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "chat_template.jinja",
+          "size": 7756,
+          "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "config.json",
+          "size": 6019,
+          "sha256": "496b5d5a033c6497f2db68a6cdfcbe07c37fbe3c43e9c703b3d4f03e7073f5fd",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00001-of-00012.safetensors",
+          "size": 2000535888,
+          "sha256": "1d17414dc1abf63ff063a590b2447d24f6ea7f18d5dd14d00576232231bd1eee",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00002-of-00012.safetensors",
+          "size": 2001314592,
+          "sha256": "77d83c82a83bc02b4893ab22257415806aa8400d2ba31416d26e27d9052b88bc",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00003-of-00012.safetensors",
+          "size": 2001489696,
+          "sha256": "607da15109e98ab1b1de60fc3bb9db3246ce71cd974310f66e5b259c7190d53e",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00004-of-00012.safetensors",
+          "size": 2001332856,
+          "sha256": "476ebbc278d262ba9c9f43dbed0a7194fdd783c3046f418eebafa475fe910a9f",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00005-of-00012.safetensors",
+          "size": 2001385568,
+          "sha256": "204b11abc1e223c05b9b025941b4d9b9e9b71c1d410656d3292d9e1cb909ac53",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00006-of-00012.safetensors",
+          "size": 2001201200,
+          "sha256": "2aa11e163646420fd3cbbe4d28fe258ce64868299c3f4cc08109eda78f69ca40",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00007-of-00012.safetensors",
+          "size": 2001466576,
+          "sha256": "135e10983dee048cb5fd9b1aa54731bb26e7de71a5fb3788a3aa770dfd2b8ab0",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00008-of-00012.safetensors",
+          "size": 2006184792,
+          "sha256": "72ae08e3f7e6bd2f352c882b17e386b74ec898eb0d5f61bb2707b6b6d6c656b1",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00009-of-00012.safetensors",
+          "size": 2001368888,
+          "sha256": "fe327f32b05c4783e63ba63e09e63d4e25c092983533763082e3cdfb5bbfd03c",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00010-of-00012.safetensors",
+          "size": 2003610704,
+          "sha256": "82fc8904de8bdb7d1e30e30a8293075f8a123e9db1cffe5e3a866be286d66121",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00011-of-00012.safetensors",
+          "size": 2000926592,
+          "sha256": "8c627d0980146857c8742ed6841041a9350774d7974796231a8f063bd7d11206",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model-00012-of-00012.safetensors",
+          "size": 80001416,
+          "sha256": "2b72dc82f247f36881859ce05d36c8f6b02dfe9fd5fa3237c579b958c07b28a7",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "model.safetensors.index.json",
+          "size": 6643280,
+          "sha256": "b4efab813630b87ad65f91d6b3b7efb258d92dcc2dee901e7a42697c10b55011",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "quant_stats.json",
+          "size": 439,
+          "sha256": "6e317e85c622c06293446ed0cc4cf8ebf08bb1d89b9236f231d02cb052f94c9f",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "quantize.py",
+          "size": 20887,
+          "sha256": "c482104e7fcbd8a8298f31478ff1eb39dda5130a2767da2dc2929893985821ed",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "shared_expert_verdict.md",
+          "size": 8132,
+          "sha256": "081dbcccc193def1ebd9ec6b4a7bbef2ef26ef6ac222ddbe4476b0faed7eb61f",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "special_tokens_map.json",
+          "size": 102779,
+          "sha256": "08aed9e321dc05275ac68cf883bfa96006b3fc09ff5cccadf262b6bce0873adb",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "tokenizer_config.json",
+          "size": 103580,
+          "sha256": "00e800279d8436c324b924e97872c7eacd2b19406aa0fe71eeb557b4cd53aa3e",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "codec.pth",
+          "size": 1871099728,
+          "sha256": "74fc41c5a7151c6f350af8bd7e5d6e3accfcc7f3dfbfac23afd35af07052bb2f",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "tokenizer.json",
+          "size": 20791070,
+          "sha256": "0e9b9db76b2f0389b04b6ef057a2ac3b89100b7e96f2dd7034d19580a09654d6",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        }
+      ]
+    },
+    {
+      "id": "int8",
+      "label": "INT8 ConvRot",
+      "format": "INT8 ConvRot",
+      "target": "drama-3-int8",
+      "kind": "shared",
+      "quantization": "int8_convrot",
+      "precision": "int8_convrot-experts/bf16",
+      "repo": "PedroMarinhoDev/Drama-3-ComfyUI",
+      "revision": "9063c072019aa578895e51adb5489c6cd2c834b0",
+      "hf_revision": "9063c072019aa578895e51adb5489c6cd2c834b0",
+      "sources": [
+        "huggingface"
+      ],
+      "files": [
+        {
+          "name": "drama3_int8experts_bf16.safetensors",
+          "size": 38696401232,
+          "sha256": "f407996b17583ba857ace14e0330a13788cf89f4d47cfdcd4766ad5106576899",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "codec.pth",
+          "size": 1871099728,
+          "sha256": "74fc41c5a7151c6f350af8bd7e5d6e3accfcc7f3dfbfac23afd35af07052bb2f",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "config.json",
+          "size": 5535,
+          "sha256": "4b13a31b504cf54181f52df5bbb27604f5cc4b77b6e90a12ab85d62e0d70b693",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "tokenizer.json",
+          "size": 20791070,
+          "sha256": "0e9b9db76b2f0389b04b6ef057a2ac3b89100b7e96f2dd7034d19580a09654d6",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "control-head.safetensors",
+          "size": 4240,
+          "sha256": "42f78f0f377f0e6d29f0a2efe2d2e7c1a6d72f7326bd4345921a672182d29f53",
+          "bundled": true
+        }
+      ]
+    },
+    {
+      "id": "w6a8",
+      "label": "W6A8",
+      "format": "W6A8",
+      "target": "drama-3-w6a8",
+      "kind": "shared",
+      "quantization": "w6a8",
+      "precision": "w6a8-experts/bf16",
+      "repo": "PedroMarinhoDev/Drama-3-ComfyUI",
+      "revision": "9063c072019aa578895e51adb5489c6cd2c834b0",
+      "hf_revision": "9063c072019aa578895e51adb5489c6cd2c834b0",
+      "sources": [
+        "huggingface"
+      ],
+      "files": [
+        {
+          "name": "drama3_w6a8experts_bf16.safetensors",
+          "size": 32656613840,
+          "sha256": "09d063f2667edae5baab63a8aa583d5445fc6693658b676a490d3cec827fb785",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "codec.pth",
+          "size": 1871099728,
+          "sha256": "74fc41c5a7151c6f350af8bd7e5d6e3accfcc7f3dfbfac23afd35af07052bb2f",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "config.json",
+          "size": 5535,
+          "sha256": "4b13a31b504cf54181f52df5bbb27604f5cc4b77b6e90a12ab85d62e0d70b693",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "tokenizer.json",
+          "size": 20791070,
+          "sha256": "0e9b9db76b2f0389b04b6ef057a2ac3b89100b7e96f2dd7034d19580a09654d6",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "control-head.safetensors",
+          "size": 4240,
+          "sha256": "42f78f0f377f0e6d29f0a2efe2d2e7c1a6d72f7326bd4345921a672182d29f53",
+          "bundled": true
+        }
+      ]
+    },
+    {
+      "id": "w4a8",
+      "label": "W4A8",
+      "format": "W4A8",
+      "target": "drama-3-w4a8",
+      "kind": "shared",
+      "quantization": "w4a8",
+      "precision": "w4a8-codebook-experts/bf16",
+      "repo": "PedroMarinhoDev/Drama-3-ComfyUI",
+      "revision": "9063c072019aa578895e51adb5489c6cd2c834b0",
+      "hf_revision": "9063c072019aa578895e51adb5489c6cd2c834b0",
+      "sources": [
+        "huggingface"
+      ],
+      "files": [
+        {
+          "name": "drama3_w4a8experts_bf16.safetensors",
+          "size": 24603565376,
+          "sha256": "18fea6b8194f03c639098c93db5e4fc886e190e6b08e6eb69f9501f9703d7274",
+          "huggingface_compatible": true
+        },
+        {
+          "name": "codec.pth",
+          "size": 1871099728,
+          "sha256": "74fc41c5a7151c6f350af8bd7e5d6e3accfcc7f3dfbfac23afd35af07052bb2f",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "config.json",
+          "size": 5535,
+          "sha256": "4b13a31b504cf54181f52df5bbb27604f5cc4b77b6e90a12ab85d62e0d70b693",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "tokenizer.json",
+          "size": 20791070,
+          "sha256": "0e9b9db76b2f0389b04b6ef057a2ac3b89100b7e96f2dd7034d19580a09654d6",
+          "huggingface_compatible": true,
+          "repository": "fishaudio/drama-3",
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+        },
+        {
+          "name": "control-head.safetensors",
+          "size": 4240,
+          "sha256": "42f78f0f377f0e6d29f0a2efe2d2e7c1a6d72f7326bd4345921a672182d29f53",
+          "bundled": true
+        }
+      ]
+    },
+    {
+      "id": "gguf-4bit-experts-q4-k-s",
+      "label": "GGUF Q4_K_S - 4-bit backbone",
+      "format": "Q4_K_S / 4-bit backbone",
+      "target": "gguf-4bit-experts-q4-k-s",
+      "kind": "gguf",
+      "repo": "Jmica/Drama-3-GGUF",
+      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "sources": [
+        "huggingface"
+      ],
+      "files": [
+        {
+          "name": "drama-3-backbone-4bit-experts-Q4_K_S.gguf",
+          "size": 23386029088,
+          "sha256": "ae65d77b4fe21d5d176cf9bb8123fa21982c65d6e40a32cbed1b85c31390fdb6",
+          "huggingface_compatible": true
+        }
+      ]
+    },
+    {
+      "id": "gguf-8bit-f32-routers-bf16-embed-head-experts-q4-k-s",
+      "label": "GGUF Q4_K_S - full embedding/head",
+      "format": "Q4_K_S / full embedding/head",
+      "target": "gguf-8bit-f32-routers-bf16-embed-head-experts-q4-k-s",
+      "kind": "gguf",
+      "repo": "Jmica/Drama-3-GGUF",
+      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "sources": [
+        "huggingface"
+      ],
+      "files": [
+        {
+          "name": "drama-3-backbone-8bit-F32-routers-BF16-embed-head-experts-Q4_K_S.gguf",
+          "size": 25634020064,
+          "sha256": "ea8b2e595026e6ec8570606d8633415ed3b016659f8415ba24de315e8ce60aeb",
+          "huggingface_compatible": true
+        }
+      ]
+    },
+    {
+      "id": "gguf-8bit-f32-routers-experts-q4-k-s",
+      "label": "GGUF Q4_K_S - FP32 routers",
+      "format": "Q4_K_S / FP32 routers",
+      "target": "gguf-8bit-f32-routers-experts-q4-k-s",
+      "kind": "gguf",
+      "repo": "Jmica/Drama-3-GGUF",
+      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "sources": [
+        "huggingface"
+      ],
+      "files": [
+        {
+          "name": "drama-3-backbone-8bit-F32-routers-experts-Q4_K_S.gguf",
+          "size": 24665234144,
+          "sha256": "2e3da9f7c36f51f1eda7490c110469847757c0f7e715b9bddf65b8aeb95b14d7",
+          "huggingface_compatible": true
+        }
+      ]
+    },
+    {
+      "id": "gguf-8bit-experts-q2-k",
+      "label": "GGUF Q2_K",
+      "format": "Q2_K",
+      "target": "gguf-8bit-experts-q2-k",
+      "kind": "gguf",
+      "repo": "Jmica/Drama-3-GGUF",
+      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "sources": [
+        "huggingface"
+      ],
+      "files": [
+        {
+          "name": "drama-3-backbone-8bit-experts-Q2_K.gguf",
+          "size": 17053639872,
+          "sha256": "041be86fbb53bf4002d59bf7d5f0c99c321e0b21f5aa3b53fec380eec6f892d3",
+          "huggingface_compatible": true
+        }
+      ]
+    },
+    {
+      "id": "gguf-8bit-experts-q3-k-s",
+      "label": "GGUF Q3_K_S",
+      "format": "Q3_K_S",
+      "target": "gguf-8bit-experts-q3-k-s",
+      "kind": "gguf",
+      "repo": "Jmica/Drama-3-GGUF",
+      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "sources": [
+        "huggingface"
+      ],
+      "files": [
+        {
+          "name": "drama-3-backbone-8bit-experts-Q3_K_S.gguf",
+          "size": 20325196992,
+          "sha256": "b946a8c9806deba559590b98e37ffc9e0957109263e111513734fa93284db16b",
+          "huggingface_compatible": true
+        }
+      ]
+    },
+    {
+      "id": "gguf-8bit-experts-q4-k-s",
+      "label": "GGUF Q4_K_S",
+      "format": "Q4_K_S",
+      "target": "gguf-8bit-experts-q4-k-s",
+      "kind": "gguf",
+      "repo": "Jmica/Drama-3-GGUF",
+      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "sources": [
+        "huggingface"
+      ],
+      "files": [
+        {
+          "name": "drama-3-backbone-8bit-experts-Q4_K_S.gguf",
+          "size": 24596497888,
+          "sha256": "05af716baf78e7c20863b9ccebb3ebdeca9607dd3ea7d0b72c35079e675b212b",
+          "huggingface_compatible": true
+        }
+      ]
+    }
+  ]
+}

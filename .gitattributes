@@ -1,0 +1,16 @@
+* text=auto eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+# Patch checksums cover their original bytes, including upstream CRLF context.
+*.patch -text -whitespace
+*.bat text eol=crlf
+*.ico binary
+*.png binary
+src/drama_low_vram/data/control-head.safetensors binary

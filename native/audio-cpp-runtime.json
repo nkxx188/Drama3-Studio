@@ -1,0 +1,19 @@
+{
+  "upstream": "624cf918e51263d39c2a0d28a6c5e3d55990b79f",
+  "patch": "native\\audio-cpp-runtime.patch",
+  "sha256": "d73ec8b5bf09c60718619f591e74daec33ebb0434bac7fb1d572fddafea44575",
+  "bytes": 174844,
+  "native_protocol": 5,
+  "features": [
+    "ordinary",
+    "references",
+    "previous_takes",
+    "stream",
+    "infill",
+    "audio_stream",
+    "design",
+    "joint_dialogue",
+    "reference_prewarm"
+  ],
+  "preserves_expert_top8": true
+}

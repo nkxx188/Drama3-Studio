@@ -1,0 +1,202 @@
+"""Explicit per-line scene scheduling with stable voice anchors and real takes.
+
+This uses complete TTS utterances and supplies exact generated/reference codes.
+It does not claim the model emitted native audio separators.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+import json
+from pathlib import Path
+import time
+
+from .codec import concatenate_wavs
+from .protocols import (
+    PreviousTake, SPEAKER_TAG_PATTERN, UNICODE_WHITE_SPACE,
+    validate_content, validate_scene_inputs,
+)
+from .workflows import DramaWorkflows, load_take
+from .sampling import DEFAULT_TOP_K
+
+
+class SceneSession:
+    def __init__(self, engine, output, *, scene, characters, lines, references=(),
+                 direction="", seed=123, max_new_tokens=768, max_chunk_chars=160,
+                 strategy="per_line", temperature=None, top_k=DEFAULT_TOP_K, top_p=None):
+        validate_scene_inputs(scene, characters, lines)
+        validate_content(direction, "scene direction", empty=True)
+        voices = {character.speaker for character in characters}
+        if len(references) > 32:
+            raise ValueError("At most 32 reference clips are supported")
+        for reference in references:
+            reference.transcript()
+            if reference.speaker not in voices:
+                raise ValueError("Reference voice is not assigned to a scene character")
+        by_name = {character.name: character for character in characters}
+        for line in lines:
+            speaker = by_name[line.character].speaker
+            if any(int(tag) != speaker for tag in SPEAKER_TAG_PATTERN.findall(line.text)):
+                raise ValueError("A line's speaker tag conflicts with its character")
+        if (isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**64
+                or isinstance(max_new_tokens, bool) or not isinstance(max_new_tokens, int)
+                or not 1 <= max_new_tokens <= engine.options.codec_max_frames
+                or isinstance(max_chunk_chars, bool) or not isinstance(max_chunk_chars, int)
+                or max_chunk_chars < 1):
+            raise ValueError("Invalid scene generation parameters")
+        self.engine, self.output = engine, Path(output).resolve()
+        self.scene, self.characters, self.lines = scene, tuple(characters), tuple(lines)
+        self.references, self.direction = tuple(references), direction
+        self.seed, self.maximum, self.max_chunk_chars = seed, max_new_tokens, max_chunk_chars
+        if strategy not in ("per_line", "joint"):
+            raise ValueError("Scene strategy must be joint or per_line")
+        self.strategy = strategy
+        self.sampling = {"top_k": top_k}
+        if temperature is not None:
+            self.sampling["temperature"] = temperature
+        if top_p is not None:
+            self.sampling["top_p"] = top_p
+        self.status, self.results, self.report, self._started = "waiting", [], None, False
+
+    def run(self, *, progress=None, cancelled=None):
+        if self._started:
+            raise RuntimeError("A scene session can only run once")
+        self._started = True
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        directory = self.output.with_name(self.output.stem + ".lines")
+        directory.mkdir(exist_ok=True)
+        started, position, first, recent = time.perf_counter(), 0, {}, {}
+        first_sources, recent_sources = {}, {}
+        by_name = {character.name: character for character in self.characters}
+        with self.engine._lock:
+            try:
+                if getattr(self.engine, "is_gguf", False):
+                    from .gguf_workflows import GGUFWorkflows
+                    workflows = GGUFWorkflows(self.engine)
+                else:
+                    workflows = DramaWorkflows(self.engine)
+                self.status = "generating"
+                if self.strategy == "joint":
+                    texts = []
+                    for line in self.lines:
+                        speaker = by_name[line.character].speaker
+                        text = line.text
+                        if SPEAKER_TAG_PATTERN.match(text.lstrip(UNICODE_WHITE_SPACE)) is None:
+                            text = f"<|speaker:{speaker}|> {text}"
+                        texts.append(text)
+                    note = f"Scene: {self.scene}\nCharacters:\n" + "\n".join(
+                        f"Speaker {role.speaker}: {role.description}" for role in self.characters)
+                    if self.direction:
+                        note += "\n" + self.direction
+                    result = workflows.run(
+                        "tts", "\n".join(texts), self.output, references=self.references,
+                        direction=note, seed=self.seed, max_new_tokens=self.maximum,
+                        single_chunk=True, progress=progress, cancelled=cancelled, **self.sampling)
+                    self.status = result["status"]
+                    self.report = {
+                        **result, "strategy": "joint", "native_audio_separators_used": False,
+                        "scene": self.scene, "characters": [asdict(role) for role in self.characters],
+                        "script": [asdict(line) for line in self.lines],
+                        "direction": self.direction, "segments": [],
+                    }
+                    if result.get("audio"):
+                        position = result["audio"]["samples"]
+                    return
+                for index, line in enumerate(self.lines):
+                    if cancelled and cancelled():
+                        self.status = "cancelled"
+                        break
+                    character = by_name[line.character]
+                    tagged = line.text
+                    if SPEAKER_TAG_PATTERN.match(tagged.lstrip(UNICODE_WHITE_SPACE)) is None:
+                        tagged = f"<|speaker:{character.speaker}|> {tagged}"
+                    note = f"Scene: {self.scene}\nCharacter: {character.name}. {character.description}"
+                    if self.direction:
+                        note += "\n" + self.direction
+                    history = [first[character.speaker]] if character.speaker in first else []
+                    if character.speaker in recent and recent[character.speaker] is not first.get(character.speaker):
+                        history.append(recent[character.speaker])
+                    history_sources = ([dict(first_sources[character.speaker])]
+                                       if character.speaker in first_sources else [])
+                    if len(history) > 1:
+                        history_sources.append(dict(recent_sources[character.speaker]))
+                    references = [reference for reference in self.references
+                                  if reference.speaker == character.speaker]
+
+                    def events(event):
+                        if progress:
+                            progress({"line": index + 1, "lines": len(self.lines),
+                                      "character": character.name, **event})
+
+                    result = workflows.run(
+                        "tts", tagged, directory / f"line-{index + 1:05d}.wav",
+                        references=references, previous_takes=history, direction=note,
+                        seed=(self.seed + index) % 2**64, max_new_tokens=self.maximum,
+                        max_chunk_chars=self.max_chunk_chars, progress=events, cancelled=cancelled,
+                        **self.sampling)
+                    if result["status"] != "complete":
+                        self.status = result["status"]
+                        break
+                    if getattr(self.engine, "is_gguf", False):
+                        take, _, _ = workflows.load_take(result["take_file"])
+                    else:
+                        take, _, _ = load_take(result["take_file"], self.engine.model.config)
+                    chunks = result["chunks"]
+                    first_count, last_count = chunks[0]["frames"], chunks[-1]["frames"]
+                    # Anchor actual first/last chunks, with their own actual
+                    # transcripts. Never truncate audio under a full transcript.
+                    new_anchor = character.speaker not in first
+                    if new_anchor:
+                        first[character.speaker] = PreviousTake(
+                            chunks[0]["text"], take.codes[:, :first_count].clone())
+                        first_sources[character.speaker] = {
+                            "take_file": result["take_file"], "text": chunks[0]["text"],
+                            "frames": first_count, "edge": "first"}
+                    recent[character.speaker] = (
+                        first[character.speaker] if new_anchor and len(chunks) == 1
+                        else PreviousTake(chunks[-1]["text"], take.codes[:, -last_count:].clone()))
+                    recent_sources[character.speaker] = {
+                        "take_file": result["take_file"], "text": chunks[-1]["text"],
+                        "frames": last_count, "edge": "last"}
+                    samples = result["audio"]["samples"]
+                    row = {
+                        "index": index, "character": character.name, "speaker": character.speaker,
+                        "text": line.text, "path": result["output"], "take_file": result["take_file"],
+                        "start_sample": position, "end_sample": position + samples,
+                        "start_seconds": position / 44100, "end_seconds": (position + samples) / 44100,
+                        "samples": samples, "sample_rate": 44100,
+                        "reference_count": len(references), "history_chunks": len(history),
+                        "history_sources": history_sources,
+                        "delivered_seconds": time.perf_counter() - started,
+                    }
+                    position += samples
+                    self.results.append(row)
+                    yield row
+                else:
+                    if cancelled and cancelled():
+                        self.status = "cancelled"
+                    else:
+                        concatenate_wavs([row["path"] for row in self.results], self.output)
+                        self.status = "complete"
+            except GeneratorExit:
+                self.status = "cancelled"
+                raise
+            except BaseException:
+                self.status = "error"
+                raise
+            finally:
+                self.report = self.report or {
+                    "status": self.status, "strategy": "per_line_tts",
+                    "native_audio_separators_used": False,
+                    "output": str(self.output) if self.status == "complete" else None,
+                    "scene": self.scene, "characters": [asdict(character) for character in self.characters],
+                    "script": [asdict(line) for line in self.lines],
+                    "references": [asdict(reference) for reference in self.references],
+                    "direction": self.direction, "seed": self.seed,
+                    "max_new_tokens": self.maximum, "max_chunk_chars": self.max_chunk_chars,
+                    "segments": self.results, "sample_rate": 44100, "samples": position,
+                    "duration_seconds": position / 44100,
+                    "total_seconds": time.perf_counter() - started,
+                }
+                self.output.with_suffix(".json").write_text(
+                    json.dumps(self.report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

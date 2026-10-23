@@ -1,0 +1,17 @@
+{
+  "name": "drama3-script-editor",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "esbuild editor.js --bundle --minify --format=iife --target=es2022 --outfile=../script-editor.js --legal-comments=eof"
+  },
+  "dependencies": {
+    "@codemirror/commands": "6.10.1",
+    "@codemirror/state": "6.5.2",
+    "@codemirror/view": "6.38.6",
+    "lucide": "0.468.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}

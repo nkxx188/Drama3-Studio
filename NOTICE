@@ -1,0 +1,27 @@
+Drama 3 Studio
+Built with Fish Audio.
+
+Fish Audio Materials:
+These Fish Audio Materials are licensed under the Fish Audio Community License, Version 1.0. Copyright © 39 AI, INC. All Rights Reserved.
+
+Fish Speech is pinned to commit 541566932abbaebcb0a40e562a1f846738383f38.
+Drama 3 Studio modifies its Drama 3 generator and audio-tower sampler so that
+top_k=0 disables top-k truncation while preserving top-p sampling.
+The modifications are recorded in third_party/fish-speech.patch.
+The Fish Audio Community License is included in licenses/fish-audio/LICENSE.
+`src/drama_low_vram/data/control-head.safetensors` contains the unchanged
+`<|audio_separator|>` output row extracted from the official Drama 3 output
+head. It is bundled as a small runtime support file for the downloaded Comfy
+quantized variants; the model weights remain separate downloads.
+
+The native backend includes modifications to audio.cpp, pinned to commit
+624cf918e51263d39c2a0d28a6c5e3d55990b79f, and uses ggml.
+Their notices and license terms are included in licenses/audio-cpp/LICENSE
+and licenses/ggml/LICENSE. The native modifications are recorded in
+native/audio-cpp-runtime.patch.
+
+The bundled script editor uses CodeMirror, Lucide and their dependencies.
+Their copyright notices and license texts are retained in ui/licenses/.
+
+The project mark is a rounded shark silhouette built from audio waveform bars
+and supplied by the project author.

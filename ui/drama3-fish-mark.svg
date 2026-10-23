@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 516 304" width="52" height="31">
+  <title>Drama 3 Studio</title>
+  <desc>Rounded shark logo with bold waveform bars and clear S-curve negative space.</desc>
+  <g id="shark-logo">
+    <g id="caudal-tail-fin">
+      <rect x="10.00" y="98.00" width="20.50" height="20.50" rx="10.25" fill="#14161A"/>
+      <rect x="44.00" y="106.00" width="20.50" height="42.00" rx="10.25" fill="#14161A"/>
+      <rect x="78.00" y="114.00" width="20.50" height="96.00" rx="10.25" fill="#14161A"/>
+      <rect x="112.00" y="102.00" width="20.50" height="20.50" rx="10.25" fill="#14161A"/>
+      <rect x="112.00" y="160.00" width="20.50" height="86.00" rx="10.25" fill="#14161A"/>
+    </g>
+    <g id="shark-dorsal-fin">
+      <rect x="214.00" y="52.00" width="20.50" height="21.50" rx="10.25" fill="#14161A"/>
+      <rect x="248.00" y="28.00" width="20.50" height="31.50" rx="10.25" fill="#14161A"/>
+    </g>
+    <g id="dorsal-main-body">
+      <rect x="146.00" y="136.00" width="20.50" height="136.00" rx="10.25" fill="#14161A"/>
+      <rect x="180.00" y="112.00" width="20.50" height="168.00" rx="10.25" fill="#14161A"/>
+      <rect x="214.00" y="92.00" width="20.50" height="182.00" rx="10.25" fill="#14161A"/>
+      <rect x="248.00" y="78.00" width="20.50" height="147.00" rx="10.25" fill="#14161A"/>
+      <rect x="282.00" y="20.00" width="20.50" height="180.00" rx="10.25" fill="#14161A"/>
+      <rect x="316.00" y="26.00" width="20.50" height="154.00" rx="10.25" fill="#14161A"/>
+      <rect x="350.00" y="44.00" width="20.50" height="121.00" rx="10.25" fill="#14161A"/>
+      <rect x="384.00" y="52.00" width="20.50" height="102.00" rx="10.25" fill="#14161A"/>
+      <rect x="418.00" y="63.00" width="20.50" height="83.00" rx="10.25" fill="#14161A"/>
+      <rect x="452.00" y="80.00" width="20.50" height="59.00" rx="10.25" fill="#14161A"/>
+      <rect x="486.00" y="108.00" width="20.50" height="26.00" rx="10.25" fill="#14161A"/>
+    </g>
+    <g id="ventral-belly-wave">
+      <rect x="248.00" y="243.50" width="20.50" height="20.50" rx="10.25" fill="#7D8694"/>
+      <rect x="282.00" y="218.50" width="20.50" height="35.50" rx="10.25" fill="#7D8694"/>
+      <rect x="316.00" y="198.50" width="20.50" height="47.50" rx="10.25" fill="#7D8694"/>
+      <rect x="350.00" y="183.50" width="20.50" height="54.50" rx="10.25" fill="#7D8694"/>
+      <rect x="384.00" y="172.50" width="20.50" height="55.50" rx="10.25" fill="#7D8694"/>
+      <rect x="418.00" y="164.50" width="20.50" height="49.50" rx="10.25" fill="#7D8694"/>
+      <rect x="452.00" y="157.50" width="20.50" height="38.50" rx="10.25" fill="#7D8694"/>
+      <rect x="486.00" y="152.50" width="20.50" height="20.50" rx="10.25" fill="#7D8694"/>
+    </g>
+  </g>
+</svg>

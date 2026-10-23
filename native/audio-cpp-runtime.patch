@@ -1,0 +1,2933 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3363515..457d0b1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -51,6 +51,30 @@ if (NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+ endif()
+ 
++# Local bounded Drama3 codec experiment; opt-in and separate from the CLI.
++if (DEFINED DRAMA_CODEC_PROBE_SOURCE)
++    # The cached compiler probe on this local Windows build decoded UTF-8
++    # showIncludes output as CP936. A wrong prefix silently records zero
++    # header dependencies, leaving object layouts stale after header edits.
++    if (MSVC AND CMAKE_CL_SHOWINCLUDES_PREFIX MATCHES "^娉")
++        set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:  ")
++    endif()
++    add_executable(drama3_codec_probe "${DRAMA_CODEC_PROBE_SOURCE}")
++    target_link_libraries(drama3_codec_probe PRIVATE engine_runtime ggml)
++endif()
++if (DEFINED DRAMA_HYBRID_PROBE_SOURCE)
++    add_executable(drama3_hybrid_probe "${DRAMA_HYBRID_PROBE_SOURCE}")
++    target_link_libraries(drama3_hybrid_probe PRIVATE engine_runtime ggml)
++endif()
++if (DEFINED DRAMA_ROUTE_REPLAY_SOURCE)
++    add_executable(drama3_route_replay "${DRAMA_ROUTE_REPLAY_SOURCE}")
++    target_link_libraries(drama3_route_replay PRIVATE engine_runtime ggml)
++endif()
++if (DEFINED DRAMA_HOST_VIEW_TEST_SOURCE)
++    add_executable(drama3_host_view_test "${DRAMA_HOST_VIEW_TEST_SOURCE}")
++    target_link_libraries(drama3_host_view_test PRIVATE engine_runtime ggml)
++endif()
++
+ if (NOT MSVC)
+     set(AUDIOCPP_DEBUG_OPT_FLAGS "-O3 -g")
+     set(CMAKE_C_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug C flags" FORCE)
+@@ -2753,6 +2777,20 @@ if(AUDIOCPP_STATIC_ESPEAK)
+     audiocpp_stage_espeak(audiocpp_cli)
+ endif()
+ target_include_directories(audiocpp_cli PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
++if (DEFINED DRAMA_WORKER_SOURCE)
++    add_executable(drama3_worker
++        "${DRAMA_WORKER_SOURCE}" app/cli/request.cpp app/cli/args.cpp app/common/base64.cpp)
++    target_link_libraries(drama3_worker PRIVATE engine_runtime ggml CUDA::cudart_static)
++    target_include_directories(drama3_worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
++    audiocpp_use_utf8_codepage(drama3_worker)
++    if (ENGINE_ENABLE_OPENMP)
++        target_link_libraries(drama3_worker PRIVATE OpenMP::OpenMP_CXX)
++    endif()
++endif()
++if (DEFINED DRAMA_PIPELINE_PROBE_SOURCE)
++    add_executable(drama3_pipeline_probe "${DRAMA_PIPELINE_PROBE_SOURCE}")
++    target_link_libraries(drama3_pipeline_probe PRIVATE engine_runtime ggml CUDA::cudart_static)
++endif()
+ # MinGW selects the wmain() entry point only when linked with -municode;
+ # without it the CLI fails to link (undefined reference / ld error 5).
+ # MSVC detects wmain natively, so this is MinGW-only. Link option only:
+diff --git a/external/ggml/src/ggml-cuda/im2col.cu b/external/ggml/src/ggml-cuda/im2col.cu
+index 05d5f3f..7226f79 100644
+--- a/external/ggml/src/ggml-cuda/im2col.cu
++++ b/external/ggml/src/ggml-cuda/im2col.cu
+@@ -305,7 +305,7 @@ void ggml_cuda_op_im2col(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+     cudaStream_t stream = ctx.stream();
+ 
+     GGML_ASSERT(src1->type == GGML_TYPE_F32);
+-    GGML_ASSERT( dst->type == GGML_TYPE_F16 || dst->type == GGML_TYPE_F32);
++    GGML_ASSERT(dst->type == GGML_TYPE_F16 || dst->type == GGML_TYPE_F32 || dst->type == GGML_TYPE_BF16);
+ 
+     const int32_t s0 = ((const int32_t*)(dst->op_params))[0];
+     const int32_t s1 = ((const int32_t*)(dst->op_params))[1];
+@@ -333,6 +333,10 @@ void ggml_cuda_op_im2col(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+ 
+     if(dst->type == GGML_TYPE_F16) {
+         im2col_cuda_f16(src1_d, (half *) dst_d, IW, IH, OW, OH, KW, KH, IC, N, IC_IH_IW, IH_IW, s0, s1, p0, p1, d0, d1, lowering, stream);
++    } else if (dst->type == GGML_TYPE_BF16) {
++        im2col_cuda<nv_bfloat16>(src1_d, (nv_bfloat16 *) dst_d,
++            IW, IH, OW, OH, KW, KH, IC, N, IC_IH_IW, IH_IW,
++            s0, s1, p0, p1, d0, d1, lowering, stream);
+     } else {
+         im2col_cuda_f32(src1_d, (float *) dst_d, IW, IH, OW, OH, KW, KH, IC, N, IC_IH_IW, IH_IW, s0, s1, p0, p1, d0, d1, lowering, stream);
+     }
+diff --git a/include/engine/community_models/fish_drama3/backbone.h b/include/engine/community_models/fish_drama3/backbone.h
+index 842e63b..1868886 100644
+--- a/include/engine/community_models/fish_drama3/backbone.h
++++ b/include/engine/community_models/fish_drama3/backbone.h
+@@ -42,6 +42,11 @@ struct Drama3BackboneDecoderConfig {
+     int64_t expert_cache_size = 32;
+     size_t prefill_cache_bytes = 256u * 1024u * 1024u;
+     bool profile_prefill_cache = false;
++    // -2: existing decoder; -1: bounded per-layer calibration; 0..top-k:
++    // explicit CPU expert budget in the cooperative single-frame decoder.
++    int64_t decode_cpu_experts = -2;
++    bool decode_keep_hits = true;
++    std::string decode_profile;
+ };
+ 
+ struct Drama3BackboneDecoderForwardResult {
+@@ -68,6 +73,8 @@ public:
+     std::vector<float> lm_head(const std::vector<float> & hidden);
+     void release_prefill_graphs();
+     void release_graphs();
++    // Existing decode sessions must be released before resizing their cache.
++    void reserve_context(int64_t cache_steps);
+ 
+     class DecodeSession {
+     public:
+diff --git a/include/engine/community_models/fish_drama3/generator.h b/include/engine/community_models/fish_drama3/generator.h
+index 8c1e4a2..537045a 100644
+--- a/include/engine/community_models/fish_drama3/generator.h
++++ b/include/engine/community_models/fish_drama3/generator.h
+@@ -26,11 +26,14 @@ public:
+     Drama3Generator(std::shared_ptr<const Drama3Assets> assets, core::ExecutionContext & execution,
+                     const runtime::SessionOptions & options);
+     ~Drama3Generator();
++    void reserve_context(int64_t cache_steps);
++    int64_t context_capacity() const noexcept;
+     codecs::FishDacCodes encode_reference(const runtime::AudioBuffer & audio);
+     void warm_streaming_codec(const codecs::FishDacCodes & reference);
+     Drama3Generation generate(const std::string & text, const std::vector<Drama3Take> & references,
+         const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
+-        const std::function<void(const runtime::AudioBuffer &)> & on_audio = {}, bool continuation = false);
++        const std::function<void(const runtime::AudioBuffer &)> & on_audio = {}, bool continuation = false,
++        const Drama3TaskPrompt & task = {});
+ 
+ private:
+     std::shared_ptr<const Drama3Assets> assets_;
+@@ -45,6 +48,9 @@ private:
+     std::unique_ptr<Drama3Tower> tower_;
+     std::unique_ptr<core::ExecutionContext> codec_execution_;
+     std::unique_ptr<codecs::FishDacCodecRuntime> codec_;
++    std::unique_ptr<core::ExecutionContext> codec_decode_execution_;
++    std::unique_ptr<codecs::FishDacCodecRuntime> codec_decode_;
++    bool bounded_codec_decode_ = false;
+     std::optional<runtime::AudioBuffer> cached_reference_audio_;
+     codecs::FishDacCodes cached_reference_codes_;
+ };
+diff --git a/include/engine/community_models/fish_drama3/prompt.h b/include/engine/community_models/fish_drama3/prompt.h
+index a0b2f5d..04854c8 100644
+--- a/include/engine/community_models/fish_drama3/prompt.h
++++ b/include/engine/community_models/fish_drama3/prompt.h
+@@ -2,18 +2,28 @@
+ 
+ #include "engine/community_models/fish_drama3/assets.h"
+ #include "engine/community_models/fish_drama3/tokenizer_text.h"
++#include <optional>
+ 
+ namespace engine::models::fish_drama3 {
+ 
+ struct Drama3Take {
+     std::string text;
+     codecs::FishDacCodes codes;
++    std::optional<std::string> lookahead;
++};
++
++struct Drama3TaskPrompt {
++    std::string mode;
++    std::string lookahead;
++    std::string character_name, voice_description, scene;
++    codecs::FishDacCodes prefix, suffix;
+ };
+ 
+ void validate_drama3_text(const std::string & text, const char * location);
+ void validate_drama3_codes(const codecs::FishDacCodes & codes, int64_t codebook_size);
+ std::vector<Drama3Frame> build_drama3_prompt(const Drama3Assets & assets,
+     const Drama3TextTokenizer & tokenizer, const std::string & text,
+-    const std::vector<Drama3Take> & references, const std::vector<Drama3Take> & history);
++    const std::vector<Drama3Take> & references, const std::vector<Drama3Take> & history,
++    const Drama3TaskPrompt & task = {});
+ 
+ }  // namespace engine::models::fish_drama3
+diff --git a/include/engine/community_models/fish_drama3/session.h b/include/engine/community_models/fish_drama3/session.h
+index f73a260..e9cb543 100644
+--- a/include/engine/community_models/fish_drama3/session.h
++++ b/include/engine/community_models/fish_drama3/session.h
+@@ -18,6 +18,8 @@ public:
+     runtime::RunMode run_mode() const override;
+     void prepare(const runtime::SessionPreparationRequest & request) override;
+     runtime::TaskResult run(const runtime::TaskRequest & request) override;
++    void reserve_context(int64_t cache_steps);
++    int64_t context_capacity() const noexcept;
+ 
+ private:
+     runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+diff --git a/include/engine/community_models/fish_drama3/tower.h b/include/engine/community_models/fish_drama3/tower.h
+index 7ddd017..b2db9ad 100644
+--- a/include/engine/community_models/fish_drama3/tower.h
++++ b/include/engine/community_models/fish_drama3/tower.h
+@@ -47,6 +47,7 @@ public:
+     Drama3Tower & operator=(const Drama3Tower &) = delete;
+ 
+     void reset();
++    void reserve_context(int64_t cache_steps);
+     void release_prefill_graphs();
+     void mix_backbone_embeddings(std::vector<float> & embeddings,
+                                  const std::vector<Drama3Frame> & frames) const;
+diff --git a/include/engine/framework/codecs/fish_dac_codec_runtime.h b/include/engine/framework/codecs/fish_dac_codec_runtime.h
+index 54b6d85..ae6718e 100644
+--- a/include/engine/framework/codecs/fish_dac_codec_runtime.h
++++ b/include/engine/framework/codecs/fish_dac_codec_runtime.h
+@@ -46,6 +46,7 @@ struct FishDacCodecRuntimeOptions {
+     size_t weight_context_bytes = 1024ull * 1024ull * 1024ull;
+     assets::TensorStorageType matmul_weight_storage_type = assets::TensorStorageType::Native;
+     assets::TensorStorageType conv_weight_storage_type = assets::TensorStorageType::Native;
++    bool encoder_bf16_compute = false;
+ };
+ 
+ class FishDacCodecComponent {
+diff --git a/include/engine/framework/core/disk_expert_weight_store.h b/include/engine/framework/core/disk_expert_weight_store.h
+index 833e18f..924bcfa 100644
+--- a/include/engine/framework/core/disk_expert_weight_store.h
++++ b/include/engine/framework/core/disk_expert_weight_store.h
+@@ -5,6 +5,7 @@
+ #include <ggml-backend.h>
+ 
+ #include <filesystem>
++#include <functional>
+ #include <memory>
+ #include <string>
+ #include <vector>
+@@ -36,8 +37,20 @@ public:
+     size_t add_group(const std::vector<std::string> & tensor_names,
+                      ggml_backend_t backend, int64_t cache_slots);
+     TensorValue tensor(size_t group, size_t projection) const;
++    // Read-only native CPU view of the existing source bytes. No bank copy.
++    // Views remain valid until this store is destroyed.
++    TensorValue host_tensor(size_t group, size_t projection);
++    std::vector<int32_t> resident_ids(size_t group) const;
+     // Stage one bounded group and return cache-slot IDs in the caller's order.
+     std::vector<int32_t> stage(size_t group, const std::vector<int32_t> & expert_ids);
++    // Optional known-route pipeline. Protect the entire required set before
++    // submitting any group; callback queues compute on the group's backend.
++    void stage_pipeline(size_t group, const std::vector<int32_t> & expert_ids, size_t width,
++        const std::function<void(const std::vector<int32_t> &, const std::vector<int32_t> &)> & compute);
++    // Read only selected rows of a BF16 matrix from the existing file mapping.
++    // Used by the opt-in host token lookup; no full host/device matrix copy.
++    std::vector<float> gather_bf16_rows(const std::string & tensor_name,
++                                      const std::vector<int32_t> & row_ids) const;
+     // Invalidate placement at an independent request boundary, retaining all allocations and statistics.
+     void invalidate_cache();
+     ggml_tensor * route(ModuleBuildContext & ctx, ggml_tensor * expert_ids, size_t group) const;
+diff --git a/include/engine/framework/modules/conv_modules.h b/include/engine/framework/modules/conv_modules.h
+index cea1d08..f6da945 100644
+--- a/include/engine/framework/modules/conv_modules.h
++++ b/include/engine/framework/modules/conv_modules.h
+@@ -15,6 +15,8 @@ struct Conv1dConfig {
+     int padding = 0;
+     int dilation = 1;
+     bool use_bias = true;
++    // Preserve BF16 convolution and bias rounding, with F32 graph outputs.
++    bool bf16_compute = false;
+ };
+ 
+ struct Conv1dWeights {
+diff --git a/model_specs/fish_drama3.json b/model_specs/fish_drama3.json
+index 7147561..10ba1fc 100644
+--- a/model_specs/fish_drama3.json
++++ b/model_specs/fish_drama3.json
+@@ -118,10 +118,10 @@
+       {
+         "name": "top_k",
+         "type": "int",
+-        "description": "Top-k candidate count.",
++        "description": "Top-k candidate limit; 0 disables top-k filtering.",
+         "required": false,
+-        "min": 1,
+-        "default": 30
++        "min": 0,
++        "default": 0
+       },
+       {
+         "name": "seed",
+@@ -204,6 +204,13 @@
+         "required": false,
+         "default": false
+       },
++      {
++        "name": "codec_encoder_bf16_compute",
++        "type": "bool",
++        "description": "Use BF16 reference-encoder arithmetic on CUDA with F16/BF16 codec weights; default true. Decoding is unchanged.",
++        "required": false,
++        "default": true
++      },
+       {
+         "name": "codec_backend",
+         "type": "enum",
+diff --git a/src/community_models/fish_drama3/backbone.cpp b/src/community_models/fish_drama3/backbone.cpp
+index 88a550f..2ff26b2 100644
+--- a/src/community_models/fish_drama3/backbone.cpp
++++ b/src/community_models/fish_drama3/backbone.cpp
+@@ -23,16 +23,27 @@
+ #include <algorithm>
+ #include <cmath>
+ #include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <array>
++#include <atomic>
++#include <condition_variable>
++#include <exception>
++#include <filesystem>
++#include <fstream>
+ #include <functional>
+ #include <memory>
+ #include <limits>
+ #include <list>
+ #include <map>
+ #include <optional>
++#include <mutex>
+ #include <stdexcept>
+ #include <string>
++#include <thread>
+ #include <utility>
+ #include <vector>
++#include "engine/framework/io/json.h"
+ 
+ namespace engine::models::fish_drama3 {
+ namespace {
+@@ -200,14 +211,17 @@ struct Drama3BackboneLayerWeights {
+ };
+ 
+ struct Drama3BackboneWeights {
++    std::string source_identity;
+     std::shared_ptr<core::ExecutionContext> cpu_execution;
+     std::shared_ptr<core::BackendWeightStore> store;
+     std::shared_ptr<core::BackendWeightStore> cpu_store;
+     std::unique_ptr<core::DiskExpertWeightStore> disk_store;
+     core::TensorValue token_embedding;
++    std::string host_embedding_name;
+     std::vector<Drama3BackboneLayerWeights> layers;
+     modules::NormWeights final_norm;
+     modules::LinearWeights lm_head;
++    bool compact_lm_head = false;
+ };
+ 
+ FullAttentionWeights load_full_attention(
+@@ -287,6 +301,11 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
+     size_t weight_context_bytes,
+     assets::TensorStorageType storage_type) {
+     auto weights = std::make_shared<Drama3BackboneWeights>();
++    if (config.decode_cpu_experts >= -1) {
++        const auto path = source.source_path();
++        weights->source_identity = path.string() + "|" + std::to_string(std::filesystem::file_size(path)) +
++            "|" + std::to_string(std::filesystem::last_write_time(path).time_since_epoch().count());
++    }
+     weights->store = std::make_shared<core::BackendWeightStore>(
+         execution.backend(),
+         execution.backend_type(),
+@@ -296,6 +315,11 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
+     if (c.cpu_expert_layers < 0 || c.cpu_expert_layers > c.layers) {
+         throw std::runtime_error("Drama 3 cpu_expert_layers must be between zero and the layer count");
+     }
++    if (c.decode_cpu_experts < -2 || c.decode_cpu_experts > c.experts_per_token)
++        throw std::runtime_error("Drama 3 decode_cpu_experts must be auto or 0..top-k");
++    if (c.decode_cpu_experts >= -1 &&
++        (!c.disk_experts || c.cpu_expert_layers != 0 || execution.backend_type() != core::BackendType::Cuda))
++        throw std::runtime_error("cooperative decode requires CUDA, disk_experts and cpu_expert_layers=0");
+     if ((c.cpu_expert_layers > 0 || c.disk_experts) && execution.backend_type() != core::BackendType::Cpu) {
+         core::BackendConfig host;
+         host.threads = execution.config().threads;
+@@ -312,11 +336,25 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
+             throw std::runtime_error("Drama 3 expert_cache_size must cover top-k and not exceed the expert count");
+         weights->disk_store = std::make_unique<core::DiskExpertWeightStore>(source.source_path(), c.pin_experts);
+     }
+-    weights->token_embedding = weights->store->load_tensor(
+-        source,
+-        root + ".embed_tokens.weight",
+-        storage_type,
+-        {c.vocab_size, c.hidden_size});
++    const auto * host_lookup = std::getenv("DRAMA_HOST_GGUF_EMBEDDING");
++    if (host_lookup && std::strcmp(host_lookup, "1") == 0) {
++        const auto metadata = source.require_metadata(root + ".embed_tokens.weight");
++        if (!weights->disk_store || c.tie_word_embeddings || storage_type != assets::TensorStorageType::Native ||
++            assets::ggml_type_for_tensor_dtype(metadata.dtype) != GGML_TYPE_BF16 ||
++            metadata.shape != std::vector<int64_t>{c.vocab_size, c.hidden_size})
++            throw std::runtime_error("host embedding experiment requires disk experts and an untied native BF16 embedding");
++        weights->host_embedding_name = "model_weights/" + root + ".embed_tokens.weight";
++        // Validate the mapped matrix at load without touching the full table.
++        (void)weights->disk_store->gather_bf16_rows(weights->host_embedding_name, {0});
++        debug::timing_log_scalar("drama3.host_embedding_saved_mb",
++            static_cast<double>(c.vocab_size * c.hidden_size * sizeof(ggml_bf16_t)) / (1024 * 1024));
++    } else {
++        weights->token_embedding = weights->store->load_tensor(
++            source,
++            root + ".embed_tokens.weight",
++            storage_type,
++            {c.vocab_size, c.hidden_size});
++    }
+     weights->layers.reserve(static_cast<size_t>(c.layers));
+     for (int64_t layer = 0; layer < c.layers; ++layer) {
+         const std::string prefix = root + ".layers." + std::to_string(layer);
+@@ -355,6 +393,25 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
+     weights->final_norm = binding::norm_weight_from_source(*weights->store, source, root + ".norm", c.hidden_size);
+     if (c.tie_word_embeddings) {
+         weights->lm_head = {weights->token_embedding, std::nullopt};
++    } else if (std::getenv("DRAMA_COMPACT_GGUF_HEAD") != nullptr &&
++               !c.lm_head_token_ids.empty() &&
++               assets::ggml_type_for_tensor_dtype(
++                   source.require_metadata(c.lm_head_prefix + ".weight").dtype) == GGML_TYPE_BF16) {
++        const auto head = source.require_tensor(c.lm_head_prefix + ".weight",
++            assets::TensorStorageType::Native, {c.vocab_size, c.hidden_size});
++        if (head.type != GGML_TYPE_BF16) throw std::runtime_error("Expected native BF16 head");
++        const size_t row_bytes = static_cast<size_t>(c.hidden_size) * sizeof(uint16_t);
++        std::vector<std::byte> rows(c.lm_head_token_ids.size() * row_bytes);
++        for (size_t row = 0; row < c.lm_head_token_ids.size(); ++row) {
++            const auto token = c.lm_head_token_ids[row];
++            if (token < 0 || token >= c.vocab_size) throw std::runtime_error("Invalid compact head row");
++            std::memcpy(rows.data() + row * row_bytes,
++                        head.bytes.data() + static_cast<size_t>(token) * row_bytes, row_bytes);
++        }
++        weights->lm_head = {weights->store->make_tensor(core::TensorShape::from_dims(
++            {static_cast<int64_t>(c.lm_head_token_ids.size()), c.hidden_size}),
++            GGML_TYPE_BF16, rows.data(), rows.size()), std::nullopt};
++        weights->compact_lm_head = true;
+     } else {
+         weights->lm_head = binding::linear_from_source(
+             *weights->store,
+@@ -423,7 +480,7 @@ struct Drama3MoeInputs {
+     ggml_tensor * scales;
+ };
+ 
+-Drama3MoeInputs build_moe_inputs(
++ggml_tensor * build_shared_expert(
+     core::ModuleBuildContext & ctx,
+     const core::TensorValue & x,
+     const Drama3BackboneLayerWeights & weights,
+@@ -441,6 +498,16 @@ Drama3MoeInputs build_moe_inputs(
+     auto * shared_scale = ggml_sigmoid(ctx.ggml, ggml_mul_mat(ctx.ggml, weights.shared_gate.tensor, x.tensor));
+     auto * shared_output = ggml_mul(ctx.ggml, shared.tensor, shared_scale);
+     const int64_t steps = ggml_nelements(x.tensor) / config.hidden_size;
++    return ggml_reshape_2d(ctx.ggml, shared_output, config.hidden_size, steps);
++}
++
++Drama3MoeInputs build_moe_inputs(
++    core::ModuleBuildContext & ctx,
++    const core::TensorValue & x,
++    const Drama3BackboneLayerWeights & weights,
++    const Drama3BackboneDecoderConfig & config) {
++    auto * shared = build_shared_expert(ctx, x, weights, config);
++    const int64_t steps = ggml_nelements(x.tensor) / config.hidden_size;
+     auto * hidden = ggml_reshape_2d(ctx.ggml, x.tensor, config.hidden_size, steps);
+     auto * router_logits = ggml_mul_mat(ctx.ggml, weights.router.tensor, hidden);
+     auto * probabilities = ggml_soft_max(ctx.ggml, router_logits);
+@@ -448,7 +515,7 @@ Drama3MoeInputs build_moe_inputs(
+     auto * selected = ggml_get_rows(ctx.ggml, ggml_reshape_3d(ctx.ggml, probabilities, 1, config.experts, steps), expert_ids);
+     selected = ggml_reshape_2d(ctx.ggml, selected, config.experts_per_token, steps);
+     selected = ggml_div(ctx.ggml, selected, ggml_sum_rows(ctx.ggml, selected));
+-    return {ggml_reshape_2d(ctx.ggml, shared_output, config.hidden_size, steps), expert_ids, selected};
++    return {shared, expert_ids, selected};
+ }
+ 
+ core::TensorValue mlp(
+@@ -1183,7 +1250,8 @@ private:
+                 if (token < 0 || token + count > config_.vocab_size)
+                     throw std::runtime_error("Drama 3 LM head candidate range is outside the vocabulary");
+                 auto weight = core::wrap_tensor(
+-                    ggml_view_2d(ctx.ggml, head, config_.hidden_size, count, head->nb[1], token * head->nb[1]),
++                    ggml_view_2d(ctx.ggml, head, config_.hidden_size, count, head->nb[1],
++                        (weights_->compact_lm_head ? first : token) * head->nb[1]),
+                     core::TensorShape::from_dims({count, config_.hidden_size}), head->type);
+                 auto logits = modules::LinearModule({config_.hidden_size, count, false}).build(
+                     ctx, input, {weight, std::nullopt});
+@@ -1223,6 +1291,14 @@ public:
+                               const std::vector<ggml_tensor *> & keys, const std::vector<ggml_tensor *> & values,
+                               const std::vector<ggml_tensor *> & conv_tails, const std::vector<ggml_tensor *> & states)
+         : execution_(execution), weights_(weights), config_(config), steps_(steps) {
++        prefill_width_ = config.expert_cache_size;
++        if (const auto * value = std::getenv("DRAMA_GGUF_PREFILL_WIDTH")) {
++            char * end = nullptr;
++            const auto width = std::strtol(value, &end, 10);
++            if (*value == '\0' || !end || *end != '\0' || width < 1 || width > config.expert_cache_size)
++                throw std::runtime_error("DRAMA_GGUF_PREFILL_WIDTH must be within resident cache capacity");
++            prefill_width_ = width;
++        }
+         const size_t nodes = 1024;
+         const size_t small_nodes = 128;
+         const size_t small_bytes = ggml_graph_overhead_custom(small_nodes, false) + 64 * ggml_tensor_overhead();
+@@ -1241,7 +1317,7 @@ public:
+         shared_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
+         scales_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, k, steps);
+         ids_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, k, steps);
+-        const auto rows = expert_rows * config.expert_cache_size;
++        const auto rows = expert_rows * prefill_width_;
+         expert_output_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, k * steps + rows);
+         source_rows_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, rows);
+         target_rows_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, rows);
+@@ -1257,7 +1333,7 @@ public:
+         // Padded expert lanes must never read uninitialized values.
+         ggml_backend_buffer_clear(buffer_.get(), 0);
+         std::vector<int32_t> slot_ids(static_cast<size_t>(rows));
+-        for (int64_t slot = 0; slot < config.expert_cache_size; ++slot)
++        for (int64_t slot = 0; slot < prefill_width_; ++slot)
+             std::fill_n(slot_ids.begin() + slot * expert_rows, expert_rows, static_cast<int32_t>(slot));
+         ggml_backend_tensor_set(expert_slot_ids_, slot_ids.data(), 0, slot_ids.size() * sizeof(int32_t));
+         std::vector<int32_t> positions(static_cast<size_t>(steps));
+@@ -1340,7 +1416,7 @@ public:
+ 
+             {
+                 const int64_t block_rows = expert_rows;
+-                const int64_t rows = block_rows * config.expert_cache_size;
++                const int64_t rows = block_rows * prefill_width_;
+                 graph = ggml_new_graph_custom(ctx.ggml, small_nodes, false);
+                 auto * source_rows = ggml_view_1d(ctx.ggml, source_rows_, rows, 0);
+                 auto * target_rows = ggml_view_1d(ctx.ggml, target_rows_, rows, 0);
+@@ -1400,8 +1476,9 @@ public:
+         const auto k = config_.experts_per_token;
+         std::vector<float> ids(static_cast<size_t>(steps * k));
+         std::vector<std::vector<int32_t>> by_expert(static_cast<size_t>(config_.experts));
+-        const auto rows = expert_rows * config_.expert_cache_size;
++        const auto rows = expert_rows * prefill_width_;
+         std::vector<int32_t> source(static_cast<size_t>(rows)), target(static_cast<size_t>(rows));
++        std::vector<int32_t> slot_ids(static_cast<size_t>(rows));
+         double attention_ms = 0, expert_ms = 0;
+         uint64_t expert_work_rows = 0;
+         for (size_t layer = 0; layer < weights_.layers.size(); ++layer) {
+@@ -1424,8 +1501,8 @@ public:
+                 return by_expert[left].size() > by_expert[right].size();
+             });
+             const auto & weights = weights_.layers[layer];
+-            for (size_t start = 0; start < experts.size(); start += static_cast<size_t>(config_.expert_cache_size)) {
+-                const auto end = std::min(experts.size(), start + static_cast<size_t>(config_.expert_cache_size));
++            for (size_t start = 0; start < experts.size(); start += static_cast<size_t>(prefill_width_)) {
++                const auto end = std::min(experts.size(), start + static_cast<size_t>(prefill_width_));
+                 const std::vector<int32_t> group(experts.begin() + start, experts.begin() + end);
+                 const auto mapped = weights.disk_store->stage(weights.disk_group, group);
+                 size_t maximum = 0;
+@@ -1433,20 +1510,25 @@ public:
+                     maximum = std::max(maximum, by_expert[expert].size());
+                 for (size_t begin = 0; begin < maximum;) {
+                     const size_t block_rows = expert_rows;
+-                    const size_t work_rows = block_rows * config_.expert_cache_size;
++                    const size_t work_rows = block_rows * prefill_width_;
+                     std::fill_n(source.begin(), work_rows, 0);
++                    std::fill(slot_ids.begin(), slot_ids.end(), 0);
+                     for (size_t row = 0; row < work_rows; ++row)
+                         target[row] = static_cast<int32_t>(steps_ * k + row);
+                     for (size_t e = 0; e < group.size(); ++e) {
++                        std::fill_n(slot_ids.begin() + e * block_rows, block_rows, mapped[e]);
+                         const auto & pairs = by_expert[group[e]];
+                         for (size_t row = begin; row < std::min(pairs.size(), begin + block_rows); ++row) {
+-                            const auto slot_row = static_cast<size_t>(mapped[e]) * block_rows + row - begin;
++                            const auto slot_row = (prefill_width_ == config_.expert_cache_size ?
++                                static_cast<size_t>(mapped[e]) : e) * block_rows + row - begin;
+                             source[slot_row] = static_cast<int32_t>(pairs[row] / k);
+                             target[slot_row] = pairs[row];
+                         }
+                     }
+                     ggml_backend_tensor_set(source_rows_, source.data(), 0, work_rows * sizeof(int32_t));
+                     ggml_backend_tensor_set(target_rows_, target.data(), 0, work_rows * sizeof(int32_t));
++                    if (prefill_width_ != config_.expert_cache_size)
++                        ggml_backend_tensor_set(expert_slot_ids_, slot_ids.data(), 0, work_rows * sizeof(int32_t));
+                     compute(expert_graphs_[layer]);
+                     expert_work_rows += work_rows;
+                     begin += block_rows;
+@@ -1478,6 +1560,7 @@ private:
+     const Drama3BackboneWeights & weights_;
+     Drama3BackboneDecoderConfig config_;
+     int64_t steps_;
++    int64_t prefill_width_ = 0;
+     std::unique_ptr<ggml_context, GgmlContextDeleter> context_;
+     std::unique_ptr<ggml_context, GgmlContextDeleter> inputs_;
+     std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, decltype(&ggml_backend_buffer_free)> buffer_{
+@@ -1503,6 +1586,8 @@ private:
+     std::map<ggml_cgraph *, core::HostGraphPlan> plans_;
+ };
+ 
++#include "hybrid_decode.inc"
++
+ class Drama3BackboneCachedDecodeGraph {
+ public:
+     Drama3BackboneCachedDecodeGraph(
+@@ -1597,15 +1682,29 @@ public:
+         ggml_set_output(output_);
+         ggml_build_forward_expand(graph_, output_);
+         buffer_.reset(ggml_backend_alloc_ctx_tensors(persistent_ctx_.get(), execution_.backend()));
+-        if (buffer_ == nullptr || !decode_allocator_.allocate(graph_, execution_.backend(),
++        if (buffer_ == nullptr) throw std::runtime_error("failed to allocate Drama 3 cached state buffer");
++        if (config_.decode_cpu_experts >= -1) {
++            cooperative_ = std::make_unique<Drama3HybridDecodeGraph>(
++                execution_, *weights_, config_, input_, positions_, cache_slot_, attention_mask_, cache_steps_,
++                full_key_caches_, full_value_caches_, linear_conv_tails_, linear_recurrent_states_);
++        } else if (!decode_allocator_.allocate(graph_, execution_.backend(),
+                 weights_->cpu_execution ? weights_->cpu_execution->backend() : nullptr, weights_->disk_store.get())) {
+             throw std::runtime_error("failed to allocate Drama 3 backbone cached decode graph");
+         }
+         attention_mask_values_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
++        if (const auto * path = std::getenv("DRAMA_Q8_STEP_RECORD")) {
++            step_record_.open(path, std::ios::binary | std::ios::trunc);
++            if (!step_record_) throw std::runtime_error("cannot open Q8 diagnostic output");
++        }
++        if (const auto * path = std::getenv("DRAMA_Q8_STEP_REPLAY")) {
++            step_replay_.open(path, std::ios::binary);
++            if (!step_replay_) throw std::runtime_error("cannot open Q8 diagnostic fixed inputs");
++        }
+         reset();
+     }
+ 
+     ~Drama3BackboneCachedDecodeGraph() {
++        cooperative_.reset();
+         release_prefill_graphs();
+         core::release_backend_graph_resources(execution_.backend(), graph_, true);
+         decode_allocator_.reset();
+@@ -1686,7 +1785,18 @@ public:
+         if (valid_steps_ >= cache_steps_) {
+             throw std::runtime_error("Drama 3 backbone cached decode exceeded cache length");
+         }
+-        ggml_backend_tensor_set(input_, embedding.data(), 0, embedding.size() * sizeof(float));
++        std::vector<float> replay;
++        const float * incoming = embedding.data();
++        if (step_replay_.is_open()) {
++            int32_t expected_position;
++            replay.resize(static_cast<size_t>(config_.hidden_size * 2));
++            step_replay_.read(reinterpret_cast<char *>(&expected_position), sizeof(expected_position));
++            step_replay_.read(reinterpret_cast<char *>(replay.data()), replay.size() * sizeof(float));
++            if (!step_replay_ || expected_position != valid_steps_)
++                throw std::runtime_error("Q8 diagnostic fixed-input position mismatch");
++            incoming = replay.data();
++        }
++        ggml_backend_tensor_set(input_, incoming, 0, embedding.size() * sizeof(float));
+         const int32_t position = static_cast<int32_t>(valid_steps_);
+         const int32_t slot = static_cast<int32_t>(valid_steps_);
+         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
+@@ -1697,16 +1807,31 @@ public:
+             cache_steps_,
+             valid_steps_,
+             valid_steps_);
++        if (cooperative_) {
++            auto hidden = cooperative_->run();
++            record_step(incoming, hidden);
++            ++valid_steps_;
++            return hidden;
++        }
+         if (decode_allocator_.compute(execution_.backend(), graph_, "drama3_backbone.cached_decode") != GGML_STATUS_SUCCESS) {
+             throw std::runtime_error("Drama 3 backbone cached decode graph compute failed");
+         }
+         std::vector<float> hidden(static_cast<size_t>(config_.hidden_size));
+         ggml_backend_tensor_get(output_, hidden.data(), 0, hidden.size() * sizeof(float));
++        record_step(incoming, hidden);
+         ++valid_steps_;
+         return hidden;
+     }
+ 
+ private:
++    void record_step(const float * input, const std::vector<float> & hidden) {
++        if (!step_record_.is_open()) return;
++        const auto position = static_cast<int32_t>(valid_steps_);
++        step_record_.write(reinterpret_cast<const char *>(&position), sizeof(position));
++        step_record_.write(reinterpret_cast<const char *>(input), config_.hidden_size * sizeof(float));
++        step_record_.write(reinterpret_cast<const char *>(hidden.data()), hidden.size() * sizeof(float));
++        if (!step_record_) throw std::runtime_error("Q8 diagnostic output failed");
++    }
+     struct PrefillGraph {
+         GraphMemory memory;
+         ggml_backend_t backend = nullptr;
+@@ -1874,6 +1999,9 @@ private:
+     size_t prefill_cached_bytes_ = 0;
+     std::list<std::unique_ptr<PrefillGraph>> prefill_graphs_;
+     std::unique_ptr<Drama3OffloadPrefillGraph> offload_prefill_;
++    std::unique_ptr<Drama3HybridDecodeGraph> cooperative_;
++    std::ofstream step_record_;
++    std::ifstream step_replay_;
+ };
+ 
+ }  // namespace
+@@ -1892,14 +2020,20 @@ public:
+           token_embedding_(execution, weights_, config_, graph_arena_bytes),
+           forward_(execution, weights_, config_, graph_arena_bytes),
+           lm_head_(execution, weights_, config_, graph_arena_bytes),
+-          decode_graph_(execution, weights_, config_, config_.decode_cache_steps, graph_arena_bytes) {}
++          execution_(execution),
++          graph_arena_bytes_(graph_arena_bytes),
++          decode_graph_(std::make_unique<Drama3BackboneCachedDecodeGraph>(
++              execution, weights_, config_, config_.decode_cache_steps, graph_arena_bytes)) {}
+ 
+     std::vector<float> token_embedding(const std::vector<int32_t> & token_ids) {
++        if (token_ids.empty()) throw std::runtime_error("Drama 3 backbone token embedding requires tokens");
++        if (!weights_->host_embedding_name.empty())
++            return weights_->disk_store->gather_bf16_rows(weights_->host_embedding_name, token_ids);
+         return token_embedding_.run(token_ids);
+     }
+ 
+     Drama3BackboneDecoderForwardResult forward_embeddings(const std::vector<float> & embeddings, int64_t steps) {
+-        if (weights_->disk_store) return decode_graph_.prefill_embeddings(embeddings, steps);
++        if (weights_->disk_store) return decode_graph_->prefill_embeddings(embeddings, steps);
+         return forward_.run(embeddings, steps);
+     }
+ 
+@@ -1910,22 +2044,35 @@ public:
+     std::unique_ptr<Drama3BackboneDecoderRuntime::DecodeSession> create_decode_session(int64_t cache_steps);
+ 
+     Drama3BackboneCachedDecodeGraph & decode_graph(int64_t cache_steps) {
+-        if (cache_steps > decode_graph_.cache_steps()) {
++        if (cache_steps > decode_graph_->cache_steps()) {
+             throw std::runtime_error("Drama 3 backbone decode cache capacity exceeded");
+         }
++        decode_graph_->reset();
++        return *decode_graph_;
++    }
++
++    void reserve_context(int64_t cache_steps) {
++        if (decode_graph_ && cache_steps <= decode_graph_->cache_steps()) return;
++        if (cache_steps <= 0 || cache_steps > 262144)
++            throw std::runtime_error("invalid Drama 3 backbone cache capacity");
++        // Keep uploaded weights and expert banks; only request state is rebuilt.
++        release_prefill_graphs();
++        forward_.release_graph();
+         decode_graph_.reset();
+-        return decode_graph_;
++        config_.decode_cache_steps = cache_steps;
++        decode_graph_ = std::make_unique<Drama3BackboneCachedDecodeGraph>(
++            execution_, weights_, config_, cache_steps, graph_arena_bytes_);
+     }
+ 
+     void release_graphs() {
+         token_embedding_.release_graph();
+         forward_.release_graph();
+         lm_head_.release_graph();
+-        decode_graph_.reset();
++        decode_graph_->reset();
+     }
+ 
+     void release_prefill_graphs() {
+-        decode_graph_.release_prefill_graphs();
++        if (decode_graph_) decode_graph_->release_prefill_graphs();
+     }
+ 
+ private:
+@@ -1934,7 +2081,9 @@ private:
+     TokenEmbeddingGraph token_embedding_;
+     BackboneForwardGraph forward_;
+     LmHeadGraph lm_head_;
+-    Drama3BackboneCachedDecodeGraph decode_graph_;
++    core::ExecutionContext & execution_;
++    size_t graph_arena_bytes_;
++    std::unique_ptr<Drama3BackboneCachedDecodeGraph> decode_graph_;
+ };
+ 
+ class Drama3BackboneDecodeSession final : public Drama3BackboneDecoderRuntime::DecodeSession {
+@@ -2005,4 +2154,8 @@ void Drama3BackboneDecoderRuntime::release_prefill_graphs() {
+     impl_->release_prefill_graphs();
+ }
+ 
++void Drama3BackboneDecoderRuntime::reserve_context(int64_t cache_steps) {
++    impl_->reserve_context(cache_steps);
++}
++
+ }  // namespace engine::models::fish_drama3
+diff --git a/src/community_models/fish_drama3/generator.cpp b/src/community_models/fish_drama3/generator.cpp
+index 9c9e2e7..f264495 100644
+--- a/src/community_models/fish_drama3/generator.cpp
++++ b/src/community_models/fish_drama3/generator.cpp
+@@ -8,6 +8,8 @@
+ #include <algorithm>
+ #include <cmath>
+ #include <chrono>
++#include <cstdlib>
++#include <cstring>
+ #include <deque>
+ #include <iostream>
+ #include <numeric>
+@@ -24,7 +26,9 @@ int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
+         return sampling::HfLogitsProcessor::argmax(logits.data(), logits.size(), "Drama 3");
+     std::vector<int32_t> order(logits.size());
+     std::iota(order.begin(), order.end(), 0);
+-    const auto count = std::min(logits.size(), static_cast<size_t>(top_k));
++    const auto count = top_k > 0
++        ? std::min(logits.size(), static_cast<size_t>(top_k))
++        : logits.size();
+     std::partial_sort(order.begin(), order.begin() + count, order.end(), [&](int32_t left, int32_t right) {
+         return logits[left] == logits[right] ? left < right : logits[left] > logits[right];
+     });
+@@ -41,7 +45,7 @@ int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
+     double cumulative = 0;
+     for (size_t rank = 0; rank < order.size(); ++rank) {
+         cumulative += probabilities[rank] / total;
+-        if (rank > 0 && (cumulative > top_p || rank >= static_cast<size_t>(top_k))) probabilities[rank] = 0;
++        if (rank > 0 && (cumulative > top_p || (top_k > 0 && rank >= static_cast<size_t>(top_k)))) probabilities[rank] = 0;
+     }
+     std::discrete_distribution<size_t> choice(probabilities.begin(), probabilities.end());
+     return order[choice(random)];
+@@ -65,6 +69,24 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
+     auto backbone_config = assets_->backbone;
+     backbone_config.decode_cache_steps = cache_steps_;
+     backbone_config.cpu_expert_layers = runtime::parse_i64_option(options.options, {"fish_drama3.cpu_expert_layers"}).value_or(4);
++    if (const auto value = runtime::find_option(options.options, {"fish_drama3.decode_cpu_experts"})) {
++        if (*value == "auto") backbone_config.decode_cpu_experts = -1;
++        else backbone_config.decode_cpu_experts = runtime::parse_i64_option(
++            options.options, {"fish_drama3.decode_cpu_experts"}).value();
++        if (!runtime::find_option(options.options, {"fish_drama3.cpu_expert_layers"}))
++            backbone_config.cpu_expert_layers = 0;
++    }
++    if (const auto value = runtime::find_option(options.options, {"fish_drama3.decode_keep_hits"}))
++        backbone_config.decode_keep_hits = runtime::parse_bool_option(*value, "fish_drama3.decode_keep_hits");
++    if (const auto * value = std::getenv("DRAMA_GGUF_PIPELINE_WIDTH")) {
++        if (std::strcmp(value, "2") != 0 && std::strcmp(value, "4") != 0)
++            throw std::runtime_error("DRAMA_GGUF_PIPELINE_WIDTH must be 2 or 4");
++        if (backbone_config.decode_cpu_experts > 0 || backbone_config.decode_cpu_experts == -1)
++            throw std::runtime_error("GPU pipeline and CPU expert computation cannot be combined");
++        backbone_config.decode_cpu_experts = 0;
++    }
++    if (const auto value = runtime::find_option(options.options, {"fish_drama3.decode_profile"}))
++        backbone_config.decode_profile = *value;
+     if (const auto value = runtime::find_option(options.options, {"fish_drama3.disk_experts"}))
+         backbone_config.disk_experts = runtime::parse_bool_option(*value, "fish_drama3.disk_experts");
+     if (const auto value = runtime::find_option(options.options, {"fish_drama3.pin_experts"}))
+@@ -93,6 +115,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
+     codec_execution_ = std::make_unique<core::ExecutionContext>(codec_backend);
+     codecs::FishDacCodecRuntimeOptions codec_options;
+     codec_options.weight_context_bytes = 16 * 1024 * 1024;
++    codec_options.encoder_bf16_compute = true;
++    if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_encoder_bf16_compute"})) {
++        codec_options.encoder_bf16_compute = runtime::parse_bool_option(*value, "fish_drama3.codec_encoder_bf16_compute");
++    }
+     const auto component = codecs::FishDacCodecComponent::load_from_tensor_source(assets_->codec_weights,
+         assets_->codec, {}, codec_execution_->backend(), codec_backend.type, codec_options);
+     bool codec_encoder_f32_accumulation = false;
+@@ -101,17 +127,52 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
+     }
+     codec_ = std::make_unique<codecs::FishDacCodecRuntime>(component, codec_backend,
+         codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation);
++    if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_decode_strategy"})) {
++        if (*value == "stream") bounded_codec_decode_ = true;
++        else if (*value != "full") throw std::runtime_error("fish_drama3.codec_decode_strategy requires full or stream");
++    }
++    auto decode_backend = codec_backend;
++    if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_decoder_backend"})) {
++        if (*value == "cuda") decode_backend.type = core::BackendType::Cuda;
++        else if (*value == "cpu") decode_backend.type = core::BackendType::Cpu;
++        else if (*value != "same") throw std::runtime_error("fish_drama3.codec_decoder_backend requires same, cpu or cuda");
++    }
++    if (decode_backend.type != codec_backend.type) {
++        codec_decode_execution_ = std::make_unique<core::ExecutionContext>(decode_backend);
++        const auto decoder_component = codecs::FishDacCodecComponent::load_from_tensor_source(
++            assets_->codec_weights, assets_->codec, {}, codec_decode_execution_->backend(),
++            decode_backend.type, codec_options);
++        codec_decode_ = std::make_unique<codecs::FishDacCodecRuntime>(
++            decoder_component, decode_backend, decode_backend.threads, codec_options.graph_arena_bytes);
++    }
+     assets_->model_weights->release_storage();
+     assets_->codec_weights->release_storage();
+ }
+ 
+ Drama3Generator::~Drama3Generator() = default;
+ 
++int64_t Drama3Generator::context_capacity() const noexcept { return cache_steps_; }
++
++void Drama3Generator::reserve_context(int64_t cache_steps) {
++    if (cache_steps <= cache_steps_) return;
++    if (cache_steps > 8192) throw runtime::InvalidRequestError("Live context resize supports at most 8192 rows");
++    cached_prefix_.clear();
++    cached_hidden_.clear();
++    decoder_.reset();
++    backbone_->reserve_context(cache_steps);
++    tower_->reserve_context(cache_steps);
++    decoder_ = backbone_->create_decode_session(cache_steps);
++    cache_steps_ = cache_steps;
++    debug::timing_log_scalar("drama3.context_capacity", cache_steps_);
++}
++
+ codecs::FishDacCodes Drama3Generator::encode_reference(const runtime::AudioBuffer & audio) {
+     if (cached_reference_audio_ && cached_reference_audio_->sample_rate == audio.sample_rate &&
+         cached_reference_audio_->channels == audio.channels && cached_reference_audio_->samples == audio.samples) {
++        debug::timing_log_scalar("drama3.reference_cache_hit", true);
+         return cached_reference_codes_;
+     }
++    debug::timing_log_scalar("drama3.reference_cache_hit", false);
+     auto result = codec_->encode_codes(audio);
+     codec_->release_encode_graph();
+     validate_drama3_codes(result, assets_->tower.codebook_size);
+@@ -147,10 +208,11 @@ void Drama3Generator::warm_streaming_codec(const codecs::FishDacCodes & referenc
+ 
+ Drama3Generation Drama3Generator::generate(const std::string & text, const std::vector<Drama3Take> & references,
+     const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
+-    const std::function<void(const runtime::AudioBuffer &)> & on_audio, bool continuation) {
++    const std::function<void(const runtime::AudioBuffer &)> & on_audio, bool continuation,
++    const Drama3TaskPrompt & task) {
+     if (!std::isfinite(sampling.temperature) || sampling.temperature < 0 ||
+         !std::isfinite(sampling.top_p) || sampling.top_p <= 0 || sampling.top_p > 1 ||
+-        sampling.top_k <= 0 || sampling.max_frames <= 0) throw runtime::InvalidRequestError("invalid Drama 3 sampling parameters");
++        sampling.top_k < 0 || sampling.max_frames <= 0) throw runtime::InvalidRequestError("invalid Drama 3 sampling parameters");
+     using ProfileClock = std::chrono::steady_clock;
+     std::array<double, 9> component_ms{};
+     auto component_started = ProfileClock::now();
+@@ -163,10 +225,12 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+         first_audio_phases.emplace_back(name, std::chrono::duration<double, std::milli>(now - profile_marked).count());
+         profile_marked = now;
+     };
+-    const auto prompt = build_drama3_prompt(*assets_, tokenizer_, text, references, history);
++    if (task.mode == "infill" && streaming) throw runtime::InvalidRequestError("Infill requires complete reconstruction");
++    const auto prompt = build_drama3_prompt(*assets_, tokenizer_, text, references, history, task);
+     if (sampling.max_frames > cache_steps_ ||
+         prompt.size() > static_cast<size_t>(cache_steps_ - sampling.max_frames)) {
+-        throw runtime::CapacityError("Drama 3 prompt plus max_tokens exceeds fish_drama3.context_length; increase it or shorten history");
++        throw runtime::CapacityError("Drama 3 prompt plus max_tokens exceeds fish_drama3.context_length; "
++            "required_context=" + std::to_string(prompt.size() + sampling.max_frames));
+     }
+     auto & decoder = decoder_;
+     // A continuation may extend the exact frames already evaluated. Never
+@@ -216,7 +280,8 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+     std::deque<int32_t> recent;
+     std::vector<Drama3Frame> output_frames;
+     Drama3Generation result;
+-    if (streaming) codec_->reset_decode_stream();
++    auto & stream_codec = codec_decode_ ? *codec_decode_ : *codec_;
++    if (streaming) stream_codec.reset_decode_stream();
+     for (int64_t step = 0; step < sampling.max_frames; ++step) {
+         component_started = ProfileClock::now();
+         const auto candidates = backbone_->lm_head(hidden);
+@@ -261,7 +326,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+             codes.codebooks = 10;
+             codes.frames = 1;
+             codes.codes.assign(next.begin() + 1, next.end());
+-            auto chunk = codec_->decode_stream(codes);
++            auto chunk = stream_codec.decode_stream(codes);
+             if (step == 0) mark_phase("codec_first_frame_ms");
+             runtime::append_audio_buffer(result.audio, chunk);
+             if (on_audio) on_audio(chunk);
+@@ -283,7 +348,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+         if (disk_experts_) prefill.hidden.insert(prefill.hidden.end(), hidden.begin(), hidden.end());
+         component_ms[7] += debug::elapsed_ms(component_started);
+     }
+-    if (output_frames.empty()) throw std::runtime_error("Drama 3 ended before producing an audio frame");
++    if (output_frames.empty() && task.mode != "infill") throw std::runtime_error("Drama 3 ended before producing an audio frame");
+     if (disk_experts_) {
+         cached_prefix_ = prompt;
+         cached_prefix_.insert(cached_prefix_.end(), output_frames.begin(), output_frames.end());
+@@ -297,6 +362,19 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+     for (int64_t book = 0; book < 10; ++book) {
+         for (size_t row = 0; row < output_frames.size(); ++row) result.codes.codes[book * output_frames.size() + row] = output_frames[row][book + 1];
+     }
++    if (task.mode == "infill") {
++        auto middle = std::move(result.codes);
++        result.codes = {};
++        result.codes.codebooks = 10;
++        result.codes.frames = task.prefix.frames + middle.frames + task.suffix.frames;
++        if (!result.codes.frames) throw runtime::InvalidRequestError("Infill produced empty audio");
++        for (int64_t book = 0; book < 10; ++book) {
++            for (const auto * span : {&task.prefix, static_cast<const codecs::FishDacCodes *>(&middle), &task.suffix}) {
++                const auto begin = span->codes.begin() + book * span->frames;
++                result.codes.codes.insert(result.codes.codes.end(), begin, begin + span->frames);
++            }
++        }
++    }
+     if (!streaming) {
+         component_started = ProfileClock::now();
+         if (disk_experts_) {
+@@ -305,10 +383,35 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+             backbone_->release_prefill_graphs();
+             tower_->release_prefill_graphs();
+         }
+-        result.audio = codec_->decode_codes(result.codes);
+-        codec_->release_runtime_graphs();
++        auto & output_codec = codec_decode_ ? *codec_decode_ : *codec_;
++        if (bounded_codec_decode_) {
++            output_codec.reset_decode_stream();
++            result.audio.samples.reserve(result.codes.frames * static_cast<size_t>(assets_->codec.frame_length));
++            for (int64_t frame = 0; frame < result.codes.frames; ++frame) {
++                codecs::FishDacCodes one;
++                one.codebooks = 10;
++                one.frames = 1;
++                for (int64_t book = 0; book < 10; ++book)
++                    one.codes.push_back(result.codes.codes[book * result.codes.frames + frame]);
++                auto chunk = output_codec.decode_stream(one);
++                if (frame == 0) {
++                    result.audio.sample_rate = chunk.sample_rate;
++                    result.audio.channels = chunk.channels;
++                }
++                runtime::append_audio_buffer(result.audio, chunk);
++            }
++            output_codec.reset_decode_stream();
++            output_codec.release_runtime_graphs();
++        } else {
++            result.audio = output_codec.decode_codes(result.codes);
++            output_codec.release_runtime_graphs();
++        }
+         component_ms[8] += debug::elapsed_ms(component_started);
+     }
++    if (streaming) {
++        stream_codec.reset_decode_stream();
++        stream_codec.release_runtime_graphs();
++    }
+     const char * component_keys[] = {"drama3.setup_ms", "drama3.embedding_ms", "drama3.backbone_prefill_ms",
+         "drama3.tower_prefill_ms", "drama3.lm_head_ms", "drama3.sampling_ms", "drama3.tower_ms",
+         "drama3.backbone_step_ms", "drama3.codec_ms"};
+diff --git a/src/community_models/fish_drama3/loader.cpp b/src/community_models/fish_drama3/loader.cpp
+index 7f176da..2fc9d6f 100644
+--- a/src/community_models/fish_drama3/loader.cpp
++++ b/src/community_models/fish_drama3/loader.cpp
+@@ -13,7 +13,10 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_fish_drama3_loader() {
+         // Published standalone contracts predate these opt-in controls.
+         // Their values are checked by the generator and backbone constructors.
+         for (const auto * key : {"fish_drama3.disk_experts", "fish_drama3.expert_cache_size", "fish_drama3.pin_experts",
+-                                "fish_drama3.codec_encoder_f32_accumulation"}) {
++                                "fish_drama3.codec_encoder_f32_accumulation",
++                                "fish_drama3.codec_decode_strategy", "fish_drama3.codec_decoder_backend",
++                                "fish_drama3.decode_cpu_experts", "fish_drama3.decode_keep_hits",
++                                "fish_drama3.decode_profile", "fish_drama3.codec_encoder_bf16_compute"}) {
+             if (!contract->session_option_keys.count(key)) validation_options.options.erase(key);
+         }
+         runtime::validate_spec_backed_session_options(validation_options, *contract, "fish_drama3", "Drama 3");
+diff --git a/src/community_models/fish_drama3/prompt.cpp b/src/community_models/fish_drama3/prompt.cpp
+index 124020e..756dcbe 100644
+--- a/src/community_models/fish_drama3/prompt.cpp
++++ b/src/community_models/fish_drama3/prompt.cpp
+@@ -75,7 +75,8 @@ void validate_drama3_codes(const codecs::FishDacCodes & codes, int64_t size) {
+ 
+ std::vector<Drama3Frame> build_drama3_prompt(const Drama3Assets & assets,
+     const Drama3TextTokenizer & tokenizer, const std::string & text,
+-    const std::vector<Drama3Take> & references, const std::vector<Drama3Take> & history) {
++    const std::vector<Drama3Take> & references, const std::vector<Drama3Take> & history,
++    const Drama3TaskPrompt & task) {
+     std::vector<Drama3Frame> frames;
+     const auto append_text = [&](const std::string & segment) {
+         for (const auto token : tokenizer.encode(segment)) {
+@@ -94,26 +95,54 @@ std::vector<Drama3Frame> build_drama3_prompt(const Drama3Assets & assets,
+         }
+     };
+     append_text("<|im_start|>system\n");
+-    append_text(references.empty() ? "convert the provided text to speech" : "convert the provided text to speech reference to the following:");
++    if (task.mode == "infill") {
++        if (!references.empty() || !history.empty()) throw runtime::InvalidRequestError("Infill uses source audio, not references/history");
++        append_text("fill in the missing part of the speech; the suffix follows <|fim_suffix|> and the prefix follows <|fim_prefix|>");
++    } else if (task.mode == "stream") {
++        append_text("streaming speech continuation with one-chunk lookahead split by <|endofturn|>");
++        if (!references.empty()) append_text("\nconvert the provided text to speech reference to the following:");
++    } else if (task.mode == "design") {
++        if (!references.empty() || !history.empty())
++            throw runtime::InvalidRequestError("Voice design does not use references/history");
++        if (!task.scene.empty()) append_text("Scene: " + task.scene + "\n");
++        append_text("Characters:\n- " + task.character_name + ": " + task.voice_description +
++            "\nVoice every line of the script in order, with <|audio_separator|> between consecutive lines.");
++    } else if (!task.mode.empty() && task.mode != "joint")
++        throw runtime::InvalidRequestError("Unknown Drama3 task prompt");
++    else append_text(references.empty() ? "convert the provided text to speech" : "convert the provided text to speech reference to the following:");
+     for (size_t index = 0; index < references.size(); ++index) {
+         validate_drama3_text(references[index].text, "reference");
+         append_text("\n\n[Reference " + std::to_string(index + 1) + "]\nText: " + tagged(references[index].text, true) + "\nSpeech: ");
+         append_codes(references[index].codes);
+     }
+     append_text("<|im_end|>\n");
+-    const auto user_turn = [&](const std::string & value) {
++    const auto user_turn = [&](const std::string & value, const std::optional<std::string> & lookahead) {
+         validate_drama3_text(value, "input");
+         append_text("<|im_start|>user\n");
+-        append_text(tagged(value, false));
++        append_text(task.mode == "design" ? task.character_name + ": " + value
++                                        : lookahead ? value : tagged(value, false));
++        if (lookahead) {
++            if (!lookahead->empty()) validate_drama3_text(*lookahead, "lookahead");
++            append_text("<|endofturn|>");
++            if (!lookahead->empty()) append_text(*lookahead);
++        }
++        if (task.mode == "infill") {
++            append_text("\n");
++            append_text("<|fim_suffix|>");
++            if (task.suffix.frames) append_codes(task.suffix);
++            append_text("<|fim_prefix|>");
++            if (task.prefix.frames) append_codes(task.prefix);
++        }
+         append_text("<|im_end|>\n");
+         append_text("<|im_start|>assistant\n<|voice|>");
+     };
+     for (const auto & take : history) {
+-        user_turn(take.text);
++        user_turn(take.text, take.lookahead);
+         append_codes(take.codes);
+         append_text("<|im_end|>\n");
+     }
+-    user_turn(text);
++    user_turn(text, task.mode == "stream" ? std::optional<std::string>(task.lookahead) : std::nullopt);
++    if (frames.size() > 8192) throw runtime::InvalidRequestError("Drama3 prompt exceeds 8192 rows");
+     return frames;
+ }
+ 
+diff --git a/src/community_models/fish_drama3/session.cpp b/src/community_models/fish_drama3/session.cpp
+index 86d1762..78a5111 100644
+--- a/src/community_models/fish_drama3/session.cpp
++++ b/src/community_models/fish_drama3/session.cpp
+@@ -58,8 +58,10 @@ json::Value take_json(const Drama3Take & take) {
+         }
+         books.push_back(json::Value::make_array(std::move(frames)));
+     }
+-    return json::Value::make_object({{"text", json::Value::make_string(take.text)},
+-                                    {"vq_codes", json::Value::make_array(std::move(books))}});
++    json::Value::Object fields{{"text", json::Value::make_string(take.text)},
++                              {"vq_codes", json::Value::make_array(std::move(books))}};
++    if (take.lookahead) fields["lookahead"] = json::Value::make_string(*take.lookahead);
++    return json::Value::make_object(std::move(fields));
+ }
+ 
+ codecs::FishDacCodes join_codes(const std::vector<Drama3Take> & takes) {
+@@ -87,6 +89,8 @@ Drama3Session::Drama3Session(runtime::TaskSpec task, const runtime::SessionOptio
+     generator_ = std::make_unique<Drama3Generator>(assets_, execution_context(), options);
+ }
+ Drama3Session::~Drama3Session() = default;
++void Drama3Session::reserve_context(int64_t cache_steps) { generator_->reserve_context(cache_steps); }
++int64_t Drama3Session::context_capacity() const noexcept { return generator_->context_capacity(); }
+ std::string Drama3Session::family() const { return "fish_drama3"; }
+ runtime::VoiceTaskKind Drama3Session::task_kind() const { return task_.task; }
+ runtime::RunMode Drama3Session::run_mode() const { return task_.mode; }
+@@ -116,6 +120,10 @@ Drama3Take Drama3Session::conditioning_take(const json::Value & value) {
+     // Only parsing above translates client errors. I/O and codec failures retain
+     // their original classification.
+     if (audio_path) take.codes = generator_->encode_reference(read_reference(*audio_path));
++    if (const auto * next = value.find("lookahead")) {
++        take.lookahead = next->as_string();
++        if (!take.lookahead->empty()) validate_drama3_text(*take.lookahead, "history lookahead");
++    }
+     return take;
+ }
+ 
+@@ -135,7 +143,7 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
+     try {
+         sampling.temperature = runtime::parse_finite_float_option(effective.options, {"temperature"}).value_or(1.0F);
+         sampling.top_p = runtime::parse_finite_float_option(effective.options, {"top_p"}).value_or(0.9F);
+-        sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(30);
++        sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(0);
+         sampling.max_frames = runtime::parse_positive_i64_option(effective.options, {"max_tokens", "max_new_tokens"}, 1024);
+         seed = runtime::parse_u32_option(effective.options, {"seed"});
+     } catch (const std::runtime_error & error) {
+@@ -201,9 +209,48 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
+             append_take(descriptors);
+         }
+     }
++    Drama3TaskPrompt task_prompt;
++    task_prompt.mode = runtime::find_option(effective.options, {"task_mode"}).value_or("");
++    if (task_prompt.mode == "stream") {
++        task_prompt.lookahead = runtime::find_option(effective.options, {"lookahead"}).value_or("");
++    } else if (task_prompt.mode == "design") {
++        if (!references.empty() || !history.empty())
++            throw runtime::InvalidRequestError("Voice design does not use references/history");
++        const auto spec = parse_conditioning_json(
++            runtime::find_option(effective.options, {"design_character"}).value_or("{}"));
++        task_prompt.character_name = json::require_string(spec, "name");
++        task_prompt.voice_description = json::require_string(spec, "description");
++        const auto * scene = spec.find("scene");
++        task_prompt.scene = scene && scene->is_string() ? scene->as_string() : "";
++        validate_drama3_text(task_prompt.character_name, "character name");
++        validate_drama3_text(task_prompt.voice_description, "voice description");
++        if (!task_prompt.scene.empty()) validate_drama3_text(task_prompt.scene, "scene");
++        if (task_prompt.character_name.find_first_of("\r\n:") != std::string::npos)
++            throw runtime::InvalidRequestError("Character name must be single-line without a colon");
++    } else if (task_prompt.mode == "infill") {
++        if (!references.empty() || !history.empty()) throw runtime::InvalidRequestError("Infill uses its source instead of references/history");
++        const auto spec = parse_conditioning_json(runtime::find_option(effective.options, {"infill"}).value_or("{}"));
++        const auto source = conditioning_take(spec.require("source"));
++        const int64_t start = json::require_i64(spec, "start_frame"), end = json::require_i64(spec, "end_frame");
++        if (start < 0 || end < start || end > source.codes.frames)
++            throw runtime::InvalidRequestError("Invalid infill frame range");
++        const auto slice = [&](int64_t first, int64_t last) {
++            codecs::FishDacCodes span;
++            span.codebooks = 10; span.frames = last - first;
++            for (int64_t book = 0; book < 10; ++book) {
++                const auto begin = source.codes.codes.begin() + book * source.codes.frames;
++                span.codes.insert(span.codes.end(), begin + first, begin + last);
++            }
++            return span;
++        };
++        task_prompt.prefix = slice(0, start);
++        task_prompt.suffix = slice(end, source.codes.frames);
++    } else if (!task_prompt.mode.empty() && task_prompt.mode != "joint")
++        throw runtime::InvalidRequestError("Unknown native task mode");
+     const int64_t chunk_size = runtime::parse_positive_i64_option(effective.options, {"text_chunk_size"}, 200);
+     const auto mode = engine::text::parse_text_chunk_mode_override(effective.options).value_or(engine::text::TextChunkMode::TagAware);
+-    const auto chunks = runtime::chunk_text_request(effective, chunk_size, mode);
++    const auto chunks = task_prompt.mode.empty() ? runtime::chunk_text_request(effective, chunk_size, mode)
++                                                : std::vector<runtime::TaskRequest>{effective};
+     runtime::TaskResult result;
+     runtime::AudioBuffer merged;
+     std::vector<Drama3Take> generated_takes;
+@@ -223,14 +270,20 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
+             };
+         }
+         const auto & text = chunks[index].text_input->text;
+-        auto generated = generator_->generate(text, references, context, chunk_sampling, streaming, callback, index > 0);
++        auto generated = generator_->generate(text, references, context, chunk_sampling, streaming, callback, index > 0, task_prompt);
+         runtime::append_audio_buffer(merged, generated.audio);
+         limited = limited || generated.reached_limit;
+-        generated_takes.push_back({text, std::move(generated.codes)});
++        generated_takes.push_back({text, std::move(generated.codes),
++            task_prompt.mode == "stream" ? std::optional<std::string>(task_prompt.lookahead) : std::nullopt});
+     }
+     Drama3Take take{effective.text_input->text, join_codes(generated_takes)};
++    if (task_prompt.mode == "stream") take.lookahead = task_prompt.lookahead;
++    auto artifact = take_json(take).as_object();
++    json::Value::Array chunk_takes;
++    for (const auto & chunk_take : generated_takes) chunk_takes.push_back(take_json(chunk_take));
++    artifact["chunks"] = json::Value::make_array(std::move(chunk_takes));
+     result.output_artifacts.push_back(runtime::make_text_artifact(runtime::ArtifactKind::AcousticTokens,
+-        "drama3_take", json::stringify(take_json(take)), {{"family", "fish_drama3"}, {"schema", "drama3_take_v1"}}));
++        "drama3_take", json::stringify(json::Value::make_object(std::move(artifact))), {{"family", "fish_drama3"}, {"schema", "drama3_take_v1"}}));
+     result.audio_output = std::move(merged);
+     const auto wall_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+     engine::debug::timing_log_scalar("session.wall_ms", wall_ms);
+diff --git a/src/community_models/fish_drama3/tower.cpp b/src/community_models/fish_drama3/tower.cpp
+index f32c6a7..7a2ee21 100644
+--- a/src/community_models/fish_drama3/tower.cpp
++++ b/src/community_models/fish_drama3/tower.cpp
+@@ -149,18 +149,24 @@ public:
+             layers_.push_back(w);
+         }
+         store_->upload();
++        allocate_cache(capacity);
++        graphs_.resize(layers_.size());
++        reset();
++    }
++
++    void allocate_cache(int64_t capacity) {
++        const auto & c = config_;
+         ggml_init_params params{1024 * 1024, nullptr, true};
+         cache_context_.reset(ggml_init(params));
++        if (!cache_context_) throw std::runtime_error("failed to allocate Drama 3 tower cache context");
+         for (auto & layer : layers_) {
+             layer.key_cache = ggml_new_tensor_2d(cache_context_.get(), GGML_TYPE_F16,
+                                                  c.kv_heads * c.head_dim, capacity);
+             layer.value_cache = ggml_new_tensor_2d(cache_context_.get(), GGML_TYPE_F16,
+                                                    c.kv_heads * c.head_dim, capacity);
+         }
+-        cache_buffer_ = ggml_backend_alloc_ctx_tensors(cache_context_.get(), execution.backend());
++        cache_buffer_ = ggml_backend_alloc_ctx_tensors(cache_context_.get(), execution_.backend());
+         if (!cache_buffer_) throw std::runtime_error("failed to allocate Drama 3 tower cache");
+-        graphs_.resize(layers_.size());
+-        reset();
+     }
+ 
+     ~Impl() {
+@@ -171,6 +177,22 @@ public:
+ 
+     void reset() { ggml_backend_buffer_clear(cache_buffer_, 0); }
+ 
++    void reserve_context(int64_t capacity) {
++        if (capacity <= capacity_) return;
++        if (capacity > 262144) throw std::runtime_error("invalid Drama 3 tower cache capacity");
++        release_prefill_graphs();
++        graphs_.clear();
++        if (cache_buffer_) ggml_backend_buffer_free(cache_buffer_);
++        cache_buffer_ = nullptr;
++        cache_context_.reset();
++        for (auto & layer : layers_) layer.key_cache = layer.value_cache = nullptr;
++        allocate_cache(capacity);
++        capacity_ = capacity;
++        graphs_.resize(layers_.size());
++        uncached_prefill_shapes_.clear();
++        reset();
++    }
++
+     void release_prefill_graphs() {
+         prefill_graphs_.clear();
+         prefill_cached_bytes_ = 0;
+@@ -474,6 +496,7 @@ Drama3Tower::Drama3Tower(std::shared_ptr<const assets::TensorSource> weights,
+     : impl_(std::make_unique<Impl>(std::move(weights), std::move(config), execution, cache_steps, prefill_cache_bytes)) {}
+ Drama3Tower::~Drama3Tower() = default;
+ void Drama3Tower::reset() { impl_->reset(); }
++void Drama3Tower::reserve_context(int64_t cache_steps) { impl_->reserve_context(cache_steps); }
+ void Drama3Tower::release_prefill_graphs() { impl_->release_prefill_graphs(); }
+ void Drama3Tower::mix_backbone_embeddings(std::vector<float> & embeddings, const std::vector<Drama3Frame> & frames) const {
+     impl_->mix_backbone_embeddings(embeddings, frames);
+diff --git a/src/framework/codecs/fish_dac_codec_runtime.cpp b/src/framework/codecs/fish_dac_codec_runtime.cpp
+index 75763d6..85464df 100644
+--- a/src/framework/codecs/fish_dac_codec_runtime.cpp
++++ b/src/framework/codecs/fish_dac_codec_runtime.cpp
+@@ -188,6 +188,7 @@ struct QuantizerUnitWeights {
+ };
+ 
+ struct FishCodecWeights {
++    bool encoder_bf16_compute = false;
+     std::shared_ptr<core::BackendWeightStore> store;
+     modules::Conv1dWeights encoder_first;
+     std::vector<EncoderBlockWeights> encoder_blocks;
+@@ -224,7 +225,7 @@ int64_t ceil_div(int64_t a, int64_t b) {
+     return (a + b - 1) / b;
+ }
+ 
+-std::vector<float> normalized_rows(const std::vector<float> & values, int64_t rows, int64_t cols) {
++std::vector<float> normalized_rows(const std::vector<float> & values, int64_t rows, int64_t cols, bool bf16 = false) {
+     if (static_cast<int64_t>(values.size()) != rows * cols) {
+         throw std::runtime_error("Fish Audio normalized_rows shape mismatch");
+     }
+@@ -235,7 +236,13 @@ std::vector<float> normalized_rows(const std::vector<float> & values, int64_t ro
+             const float value = values[static_cast<size_t>(row * cols + col)];
+             sum += static_cast<double>(value) * static_cast<double>(value);
+         }
+-        const float inv = sum > 0.0 ? static_cast<float>(1.0 / std::sqrt(sum)) : 0.0F;
++        float inv;
++        if (bf16) {
++            const float norm = ggml_bf16_to_fp32(ggml_fp32_to_bf16(static_cast<float>(std::sqrt(sum))));
++            inv = 1.0F / std::max(norm, 1.0e-12F);
++        } else {
++            inv = sum > 0.0 ? static_cast<float>(1.0 / std::sqrt(sum)) : 0.0F;
++        }
+         for (int64_t col = 0; col < cols; ++col) {
+             const size_t index = static_cast<size_t>(row * cols + col);
+             out[index] = values[index] * inv;
+@@ -314,7 +321,8 @@ core::TensorValue causal_conv1d(
+     int stride,
+     int dilation,
+     bool use_bias,
+-    CodecStreamingState * stream = nullptr) {
++    CodecStreamingState * stream = nullptr,
++    bool bf16_compute = false) {
+     const int64_t effective_kernel = (kernel - 1) * dilation + 1;
+     const int64_t left_pad = effective_kernel - stride;
+     const int64_t right_pad = extra_padding_for_conv1d(input.shape.dims[2], effective_kernel, stride, left_pad);
+@@ -328,6 +336,7 @@ core::TensorValue causal_conv1d(
+         0,
+         dilation,
+         use_bias,
++        bf16_compute,
+     }).build(ctx, padded, weights);
+ }
+ 
+@@ -384,13 +393,19 @@ core::TensorValue causal_conv_transpose1d(
+     return slice_frames(ctx, out, start, out.shape.dims[2] - start - padding_right);
+ }
+ 
+-core::TensorValue l2_normalize_last(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
+-    const bool materialize_input = ctx.backend_type == core::BackendType::Metal;
++core::TensorValue l2_normalize_last(core::ModuleBuildContext & ctx, const core::TensorValue & input, bool bf16 = false) {
++    const bool materialize_input = ctx.backend_type == core::BackendType::Metal || ctx.backend_type == core::BackendType::Cpu;
+     const auto normalized_input = materialize_input
+         ? core::ensure_backend_addressable_layout(ctx, input)
+         : input;
+     auto squared = modules::MulModule{}.build(ctx, normalized_input, normalized_input);
+     auto sum = modules::ReduceSumModule({static_cast<int>(input.shape.rank - 1)}).build(ctx, squared);
++    if (bf16) {
++        auto * norm = ggml_round_bf16(ctx.ggml, ggml_sqrt(ctx.ggml, sum.tensor));
++        norm = ggml_clamp(ctx.ggml, norm, 1.0e-12F, std::numeric_limits<float>::max());
++        return core::wrap_tensor(ggml_round_bf16(ctx.ggml,
++            ggml_div(ctx.ggml, normalized_input.tensor, norm)), input.shape, GGML_TYPE_F32);
++    }
+     auto shifted = core::wrap_tensor(ggml_scale_bias(ctx.ggml, sum.tensor, 1.0F, 1.0e-12F), sum.shape, GGML_TYPE_F32);
+     auto denom = modules::SqrtModule{}.build(ctx, shifted);
+     auto repeated = modules::RepeatModule({normalized_input.shape}).build(ctx, denom);
+@@ -400,15 +415,22 @@ core::TensorValue l2_normalize_last(core::ModuleBuildContext & ctx, const core::
+ core::TensorValue build_mlp(
+     core::ModuleBuildContext & ctx,
+     const core::TensorValue & input,
+-    const modules::DecoderMLPWeights & weights) {
++    const modules::DecoderMLPWeights & weights,
++    bool bf16 = false) {
+     auto gate = modules::LinearModule({kCodecDim, kCodecIntermediate, false, GGML_PREC_F32})
+                     .build(ctx, input, weights.gate_proj);
++    if (bf16) gate = core::wrap_tensor(ggml_round_bf16(ctx.ggml, gate.tensor), gate.shape, GGML_TYPE_F32);
+     gate = modules::SiluModule{}.build(ctx, gate);
++    if (bf16) gate = core::wrap_tensor(ggml_round_bf16(ctx.ggml, gate.tensor), gate.shape, GGML_TYPE_F32);
+     auto up = modules::LinearModule({kCodecDim, kCodecIntermediate, false, GGML_PREC_F32})
+                   .build(ctx, input, weights.up_proj);
++    if (bf16) up = core::wrap_tensor(ggml_round_bf16(ctx.ggml, up.tensor), up.shape, GGML_TYPE_F32);
+     auto hidden = modules::MulModule{}.build(ctx, gate, up);
+-    return modules::LinearModule({kCodecIntermediate, kCodecDim, false, GGML_PREC_F32})
++    if (bf16) hidden = core::wrap_tensor(ggml_round_bf16(ctx.ggml, hidden.tensor), hidden.shape, GGML_TYPE_F32);
++    auto out = modules::LinearModule({kCodecIntermediate, kCodecDim, false, GGML_PREC_F32})
+         .build(ctx, hidden, weights.down_proj);
++    if (bf16) out = core::wrap_tensor(ggml_round_bf16(ctx.ggml, out.tensor), out.shape, GGML_TYPE_F32);
++    return out;
+ }
+ 
+ core::TensorValue reshape_heads(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
+@@ -468,31 +490,74 @@ core::TensorValue build_transformer_layer(
+     const core::TensorValue & positions,
+     const core::TensorValue & attention_mask,
+     const CodecTransformerLayerWeights & weights,
+-    CodecStreamingState * stream = nullptr) {
+-    auto normed = modules::RMSNormModule({kCodecDim, kCodecNormEps, true, false}).build(ctx, input, weights.attention_norm);
++    CodecStreamingState * stream = nullptr,
++    const core::TensorValue * rotary_cos = nullptr,
++    const core::TensorValue * rotary_sin = nullptr) {
++    const bool bf16 = rotary_cos != nullptr;
++    auto x = input;
++    if (bf16) {
++        x = core::ensure_backend_addressable_layout(ctx, x);
++        x = core::wrap_tensor(ggml_round_bf16(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
++    }
++    auto normed = modules::RMSNormModule({kCodecDim, kCodecNormEps, !bf16, false}).build(ctx, x, weights.attention_norm);
++    if (bf16) {
++        auto * base = ggml_round_bf16(ctx.ggml, normed.tensor);
++        auto * gain = ggml_round_bf16(ctx.ggml, weights.attention_norm.weight->tensor);
++        normed = core::wrap_tensor(ggml_round_bf16(ctx.ggml, ggml_mul(ctx.ggml, base, gain)), normed.shape, GGML_TYPE_F32);
++    }
+     auto q = modules::LinearModule({kCodecDim, kCodecDim, false, GGML_PREC_F32})
+                  .build(ctx, normed, {weights.attention.q_weight, std::nullopt});
+     auto k = modules::LinearModule({kCodecDim, kCodecDim, false, GGML_PREC_F32})
+                  .build(ctx, normed, {weights.attention.k_weight, std::nullopt});
+     auto v = modules::LinearModule({kCodecDim, kCodecDim, false, GGML_PREC_F32})
+                  .build(ctx, normed, {weights.attention.v_weight, std::nullopt});
+-    q = modules::RoPEModule({kCodecHeadDim, GGML_ROPE_TYPE_NORMAL, kCodecRopeTheta}).build(ctx, reshape_heads(ctx, q), positions);
+-    k = modules::RoPEModule({kCodecHeadDim, GGML_ROPE_TYPE_NORMAL, kCodecRopeTheta}).build(ctx, reshape_heads(ctx, k), positions);
++    const auto rotate = [&](core::TensorValue value) {
++        if (!bf16) return modules::RoPEModule({kCodecHeadDim, GGML_ROPE_TYPE_NORMAL, kCodecRopeTheta})
++            .build(ctx, reshape_heads(ctx, value), positions);
++        value = core::wrap_tensor(ggml_round_bf16(ctx.ggml, value.tensor), value.shape, GGML_TYPE_F32);
++        auto heads = reshape_heads(ctx, value);
++        auto pairs = core::reshape_tensor(ctx, heads, core::TensorShape::from_dims(
++            {input.shape.dims[0] * input.shape.dims[1], kCodecTransformerHeads, kCodecHeadDim / 2, 2}));
++        auto even = modules::SliceModule({3, 0, 1}).build(ctx, pairs);
++        auto odd = modules::SliceModule({3, 1, 1}).build(ctx, pairs);
++        auto rotated = modules::RopeInterleavedPairsModule{}.build(ctx, even, odd, *rotary_cos, *rotary_sin);
++        rotated = core::wrap_tensor(ggml_round_bf16(ctx.ggml, rotated.tensor), rotated.shape, GGML_TYPE_F32);
++        return core::reshape_tensor(ctx, rotated, heads.shape);
++    };
++    q = rotate(q);
++    k = rotate(k);
++    if (bf16) v = core::wrap_tensor(ggml_round_bf16(ctx.ggml, v.tensor), v.shape, GGML_TYPE_F32);
+     v = reshape_heads(ctx, v);
+     auto context = attention_from_heads(ctx, q, k, v, attention_mask, stream);
+     context = core::ensure_backend_addressable_layout(ctx, context);
++    if (bf16) context = core::wrap_tensor(ggml_round_bf16(ctx.ggml, context.tensor), context.shape, GGML_TYPE_F32);
+     context = core::reshape_tensor(
+         ctx,
+         context,
+         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], kCodecDim}));
+     auto attn = modules::LinearModule({kCodecDim, kCodecDim, false, GGML_PREC_F32})
+                     .build(ctx, context, {weights.attention.out_weight, std::nullopt});
+-    attn = modules::LayerScaleModule{}.build(ctx, attn, weights.attention_scale);
+-    auto hidden = modules::AddModule{}.build(ctx, input, attn);
+-    auto ffn_in = modules::RMSNormModule({kCodecDim, kCodecNormEps, true, false}).build(ctx, hidden, weights.ffn_norm);
+-    auto ff = build_mlp(ctx, ffn_in, weights.feed_forward);
+-    ff = modules::LayerScaleModule{}.build(ctx, ff, weights.ffn_scale);
+-    return modules::AddModule{}.build(ctx, hidden, ff);
++    if (bf16) attn = core::wrap_tensor(ggml_round_bf16(ctx.ggml, attn.tensor), attn.shape, GGML_TYPE_F32);
++    auto attention_scale = weights.attention_scale;
++    if (bf16) attention_scale.scale = core::wrap_tensor(ggml_round_bf16(ctx.ggml, attention_scale.scale.tensor), attention_scale.scale.shape, GGML_TYPE_F32);
++    attn = modules::LayerScaleModule{}.build(ctx, attn, attention_scale);
++    if (bf16) attn = core::wrap_tensor(ggml_round_bf16(ctx.ggml, attn.tensor), attn.shape, GGML_TYPE_F32);
++    auto hidden = modules::AddModule{}.build(ctx, x, attn);
++    if (bf16) hidden = core::wrap_tensor(ggml_round_bf16(ctx.ggml, hidden.tensor), hidden.shape, GGML_TYPE_F32);
++    auto ffn_in = modules::RMSNormModule({kCodecDim, kCodecNormEps, !bf16, false}).build(ctx, hidden, weights.ffn_norm);
++    if (bf16) {
++        auto * base = ggml_round_bf16(ctx.ggml, ffn_in.tensor);
++        auto * gain = ggml_round_bf16(ctx.ggml, weights.ffn_norm.weight->tensor);
++        ffn_in = core::wrap_tensor(ggml_round_bf16(ctx.ggml, ggml_mul(ctx.ggml, base, gain)), ffn_in.shape, GGML_TYPE_F32);
++    }
++    auto ff = build_mlp(ctx, ffn_in, weights.feed_forward, bf16);
++    auto ffn_scale = weights.ffn_scale;
++    if (bf16) ffn_scale.scale = core::wrap_tensor(ggml_round_bf16(ctx.ggml, ffn_scale.scale.tensor), ffn_scale.scale.shape, GGML_TYPE_F32);
++    ff = modules::LayerScaleModule{}.build(ctx, ff, ffn_scale);
++    if (bf16) ff = core::wrap_tensor(ggml_round_bf16(ctx.ggml, ff.tensor), ff.shape, GGML_TYPE_F32);
++    auto out = modules::AddModule{}.build(ctx, hidden, ff);
++    if (bf16) out = core::wrap_tensor(ggml_round_bf16(ctx.ggml, out.tensor), out.shape, GGML_TYPE_F32);
++    return out;
+ }
+ 
+ core::TensorValue make_positions(
+@@ -527,7 +592,8 @@ core::TensorValue build_window_transformer(
+     const core::TensorValue & input_bct,
+     const CodecTransformerWeights & weights,
+     int64_t window_size,
+-    CodecStreamingState * stream = nullptr) {
++    CodecStreamingState * stream = nullptr,
++    bool bf16 = false) {
+     auto x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input_bct);
+     auto positions = stream == nullptr ? make_positions(ctx, constants, x.shape.dims[1])
+         : core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
+@@ -539,10 +605,36 @@ core::TensorValue build_window_transformer(
+         ggml_set_input(positions.tensor);
+         ggml_set_input(mask.tensor);
+     }
++    core::TensorValue rotary_cos, rotary_sin;
++    if (bf16) {
++        const int64_t frames = x.shape.dims[1];
++        std::vector<float> cos(static_cast<size_t>(frames * kCodecHeadDim / 2)), sin(cos.size());
++        for (int64_t t = 0; t < frames; ++t) {
++            for (int64_t d = 0; d < kCodecHeadDim / 2; ++d) {
++                const float frequency = 1.0F / std::pow(kCodecRopeTheta, static_cast<float>(2 * d) / kCodecHeadDim);
++                const float angle = static_cast<float>(t) * frequency;
++                const auto index = static_cast<size_t>(t * (kCodecHeadDim / 2) + d);
++                cos[index] = ggml_bf16_to_fp32(ggml_fp32_to_bf16(std::cos(angle)));
++                sin[index] = ggml_bf16_to_fp32(ggml_fp32_to_bf16(std::sin(angle)));
++            }
++        }
++        const auto shape = core::TensorShape::from_dims({frames, 1, kCodecHeadDim / 2, 1});
++        rotary_cos = constants.make_tensor(shape, GGML_TYPE_F32, cos.data(), cos.size() * sizeof(float));
++        rotary_sin = constants.make_tensor(shape, GGML_TYPE_F32, sin.data(), sin.size() * sizeof(float));
++        const auto expanded = core::TensorShape::from_dims({x.shape.dims[0] * frames, kCodecTransformerHeads, kCodecHeadDim / 2, 1});
++        rotary_cos = modules::RepeatModule({expanded}).build(ctx, rotary_cos);
++        rotary_sin = modules::RepeatModule({expanded}).build(ctx, rotary_sin);
++    }
+     for (const auto & layer : weights.layers) {
+-        x = build_transformer_layer(ctx, x, positions, mask, layer, stream);
++        x = build_transformer_layer(ctx, x, positions, mask, layer, stream,
++            bf16 ? &rotary_cos : nullptr, bf16 ? &rotary_sin : nullptr);
++    }
++    x = modules::RMSNormModule({kCodecDim, kCodecNormEps, !bf16, false}).build(ctx, x, weights.norm);
++    if (bf16) {
++        auto * base = ggml_round_bf16(ctx.ggml, x.tensor);
++        auto * gain = ggml_round_bf16(ctx.ggml, weights.norm.weight->tensor);
++        x = core::wrap_tensor(ggml_round_bf16(ctx.ggml, ggml_mul(ctx.ggml, base, gain)), x.shape, GGML_TYPE_F32);
+     }
+-    x = modules::RMSNormModule({kCodecDim, kCodecNormEps, true, false}).build(ctx, x, weights.norm);
+     return modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
+ }
+ 
+@@ -552,16 +644,21 @@ core::TensorValue build_residual_unit(
+     const ResidualUnitWeights & weights,
+     int64_t channels,
+     int dilation,
+-    CodecStreamingState * stream = nullptr) {
++    CodecStreamingState * stream = nullptr,
++    bool bf16_compute = false) {
+     auto y = modules::Snake1dModule({channels}).build(ctx, input, weights.snake1);
+-    y = causal_conv1d(ctx, y, weights.conv1, channels, channels, 7, 1, dilation, true, stream);
++    if (bf16_compute) y = core::wrap_tensor(ggml_round_bf16(ctx.ggml, y.tensor), y.shape, GGML_TYPE_F32);
++    y = causal_conv1d(ctx, y, weights.conv1, channels, channels, 7, 1, dilation, true, stream, bf16_compute);
+     y = modules::Snake1dModule({channels}).build(ctx, y, weights.snake2);
+-    y = causal_conv1d(ctx, y, weights.conv2, channels, channels, 1, 1, 1, true);
++    if (bf16_compute) y = core::wrap_tensor(ggml_round_bf16(ctx.ggml, y.tensor), y.shape, GGML_TYPE_F32);
++    y = causal_conv1d(ctx, y, weights.conv2, channels, channels, 1, 1, 1, true, nullptr, bf16_compute);
+     core::TensorValue x = input;
+     if (x.shape.dims[2] != y.shape.dims[2]) {
+         x = slice_frames(ctx, x, 0, y.shape.dims[2]);
+     }
+-    return modules::AddModule{}.build(ctx, x, y);
++    auto out = modules::AddModule{}.build(ctx, x, y);
++    if (bf16_compute) out = core::wrap_tensor(ggml_round_bf16(ctx.ggml, out.tensor), out.shape, GGML_TYPE_F32);
++    return out;
+ }
+ 
+ core::TensorValue build_convnext(
+@@ -569,20 +666,49 @@ core::TensorValue build_convnext(
+     const core::TensorValue & input,
+     const ConvNeXtBlockWeights & weights,
+     int64_t channels,
+-    CodecStreamingState * stream = nullptr) {
+-    auto y = causal_depthwise_conv1d(ctx, input, weights.dwconv, channels, 7, 1, 1, true, stream);
++    CodecStreamingState * stream = nullptr,
++    bool bf16 = false) {
++    auto depthwise = weights.dwconv;
++    if (bf16) depthwise.weight = core::wrap_tensor(ggml_round_bf16(ctx.ggml,
++        ggml_cast(ctx.ggml, depthwise.weight.tensor, GGML_TYPE_F32)), depthwise.weight.shape, GGML_TYPE_F32);
++    auto y = causal_depthwise_conv1d(ctx, input, depthwise, channels, 7, 1, 1, !bf16, stream);
++    if (bf16) {
++        auto bias = core::wrap_tensor(ggml_round_bf16(ctx.ggml, weights.dwconv.bias->tensor), weights.dwconv.bias->shape, GGML_TYPE_F32);
++        bias = core::reshape_tensor(ctx, bias, core::TensorShape::from_dims({1, channels, 1}));
++        bias = modules::RepeatModule({y.shape}).build(ctx, bias);
++        y = modules::AddModule{}.build(ctx, y, bias);
++        y = core::wrap_tensor(ggml_round_bf16(ctx.ggml, y.tensor), y.shape, GGML_TYPE_F32);
++    }
+     y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, y);
+-    y = modules::LayerNormModule({channels, kConvNextNormEps, true, true}).build(ctx, y, weights.norm);
+-    y = modules::LinearModule({channels, channels * 4, true, GGML_PREC_F32}).build(ctx, y, weights.pwconv1);
++    auto norm = weights.norm;
++    auto expansion = weights.pwconv1;
++    auto projection = weights.pwconv2;
++    auto scale = weights.gamma;
++    if (bf16) {
++        norm.weight = core::wrap_tensor(ggml_round_bf16(ctx.ggml, norm.weight->tensor), norm.weight->shape, GGML_TYPE_F32);
++        norm.bias = core::wrap_tensor(ggml_round_bf16(ctx.ggml, norm.bias->tensor), norm.bias->shape, GGML_TYPE_F32);
++        expansion.bias = core::wrap_tensor(ggml_round_bf16(ctx.ggml, expansion.bias->tensor), expansion.bias->shape, GGML_TYPE_F32);
++        projection.bias = core::wrap_tensor(ggml_round_bf16(ctx.ggml, projection.bias->tensor), projection.bias->shape, GGML_TYPE_F32);
++        scale.scale = core::wrap_tensor(ggml_round_bf16(ctx.ggml, scale.scale.tensor), scale.scale.shape, GGML_TYPE_F32);
++    }
++    y = modules::LayerNormModule({channels, kConvNextNormEps, true, true}).build(ctx, y, norm);
++    if (bf16) y = core::wrap_tensor(ggml_round_bf16(ctx.ggml, y.tensor), y.shape, GGML_TYPE_F32);
++    y = modules::LinearModule({channels, channels * 4, true, GGML_PREC_F32}).build(ctx, y, expansion);
++    if (bf16) y = core::wrap_tensor(ggml_round_bf16(ctx.ggml, y.tensor), y.shape, GGML_TYPE_F32);
+     y = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, y);
+-    y = modules::LinearModule({channels * 4, channels, true, GGML_PREC_F32}).build(ctx, y, weights.pwconv2);
+-    y = modules::LayerScaleModule{}.build(ctx, y, weights.gamma);
++    if (bf16) y = core::wrap_tensor(ggml_round_bf16(ctx.ggml, y.tensor), y.shape, GGML_TYPE_F32);
++    y = modules::LinearModule({channels * 4, channels, true, GGML_PREC_F32}).build(ctx, y, projection);
++    if (bf16) y = core::wrap_tensor(ggml_round_bf16(ctx.ggml, y.tensor), y.shape, GGML_TYPE_F32);
++    y = modules::LayerScaleModule{}.build(ctx, y, scale);
++    if (bf16) y = core::wrap_tensor(ggml_round_bf16(ctx.ggml, y.tensor), y.shape, GGML_TYPE_F32);
+     y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, y);
+     core::TensorValue x = input;
+     if (x.shape.dims[2] != y.shape.dims[2]) {
+         x = slice_frames(ctx, x, 0, y.shape.dims[2]);
+     }
+-    return modules::AddModule{}.build(ctx, x, y);
++    auto out = modules::AddModule{}.build(ctx, x, y);
++    if (bf16) out = core::wrap_tensor(ggml_round_bf16(ctx.ggml, out.tensor), out.shape, GGML_TYPE_F32);
++    return out;
+ }
+ 
+ core::TensorValue build_encoder(
+@@ -590,23 +716,30 @@ core::TensorValue build_encoder(
+     core::ConstantTensorCache & constants,
+     const core::TensorValue & input,
+     const FishCodecWeights & weights) {
+-    auto x = causal_conv1d(ctx, input, weights.encoder_first, 1, 64, 7, 1, 1, true);
++    const bool bf16_input = weights.encoder_bf16_compute &&
++        (weights.encoder_first.weight.type == GGML_TYPE_BF16 || weights.encoder_first.weight.type == GGML_TYPE_F16);
++    auto encoder_input = bf16_input
++        ? core::wrap_tensor(ggml_round_bf16(ctx.ggml, input.tensor), input.shape, GGML_TYPE_F32)
++        : input;
++    auto x = causal_conv1d(ctx, encoder_input, weights.encoder_first, 1, 64, 7, 1, 1, true, nullptr, bf16_input);
+     int64_t channels = 64;
+     const int strides[] = {2, 4, 8, 8};
+     for (size_t index = 0; index < weights.encoder_blocks.size(); ++index) {
+         const auto & block = weights.encoder_blocks[index];
+-        x = build_residual_unit(ctx, x, block.residual1, channels, 1);
+-        x = build_residual_unit(ctx, x, block.residual3, channels, 3);
+-        x = build_residual_unit(ctx, x, block.residual9, channels, 9);
++        x = build_residual_unit(ctx, x, block.residual1, channels, 1, nullptr, bf16_input);
++        x = build_residual_unit(ctx, x, block.residual3, channels, 3, nullptr, bf16_input);
++        x = build_residual_unit(ctx, x, block.residual9, channels, 9, nullptr, bf16_input);
+         x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
+-        x = causal_conv1d(ctx, x, block.conv, channels, channels * 2, 2 * strides[index], strides[index], 1, true);
++        if (bf16_input) x = core::wrap_tensor(ggml_round_bf16(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
++        x = causal_conv1d(ctx, x, block.conv, channels, channels * 2, 2 * strides[index], strides[index], 1, true, nullptr, bf16_input);
+         channels *= 2;
+         if (block.transformer.has_value()) {
+-            x = build_window_transformer(ctx, constants, x, *block.transformer, 512);
++            x = build_window_transformer(ctx, constants, x, *block.transformer, 512, nullptr, bf16_input);
+         }
+     }
+     x = modules::Snake1dModule({channels}).build(ctx, x, weights.encoder_final_snake);
+-    return causal_conv1d(ctx, x, weights.encoder_final, channels, kCodecDim, 3, 1, 1, true);
++    if (bf16_input) x = core::wrap_tensor(ggml_round_bf16(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
++    return causal_conv1d(ctx, x, weights.encoder_final, channels, kCodecDim, 3, 1, 1, true, nullptr, bf16_input);
+ }
+ 
+ core::TensorValue build_decoder(
+@@ -636,14 +769,24 @@ core::TensorValue build_quantizer_out(
+     const core::TensorValue & ids_bt,
+     const QuantizerUnitWeights & weights,
+     int64_t codebook_size,
+-    bool streaming = false) {
++    bool streaming = false,
++    const core::TensorValue * projected_bf16 = nullptr) {
+     auto emb_btd = modules::CodebookLookupModule({codebook_size, 8}).build(ctx, ids_bt, weights.codebook);
+     auto emb_bdt = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, emb_btd);
++    if (projected_bf16 != nullptr) {
++        auto * embedding = ggml_cast(ctx.ggml,
++            core::ensure_backend_addressable_layout(ctx, emb_bdt).tensor, GGML_TYPE_F32);
++        embedding = ggml_round_bf16(ctx.ggml, embedding);
++        auto * delta = ggml_round_bf16(ctx.ggml, ggml_sub(ctx.ggml, embedding, projected_bf16->tensor));
++        emb_bdt = core::wrap_tensor(ggml_round_bf16(ctx.ggml,
++            ggml_add(ctx.ggml, projected_bf16->tensor, delta)), emb_bdt.shape, GGML_TYPE_F32);
++    }
+     if (streaming) {
+         // Singleton time axes can be contiguous while retaining a non-unit stride.
+         emb_bdt = core::wrap_tensor(ggml_cont(ctx.ggml, emb_bdt.tensor), emb_bdt.shape, emb_bdt.type);
+     }
+-    return modules::Conv1dModule({8, kCodecDim, 1, 1, 0, 1, true}).build(ctx, emb_bdt, weights.out_proj);
++    return modules::Conv1dModule({8, kCodecDim, 1, 1, 0, 1, true, projected_bf16 != nullptr})
++        .build(ctx, emb_bdt, weights.out_proj);
+ }
+ 
+ core::TensorValue build_zq_from_codes(
+@@ -699,31 +842,67 @@ core::TensorValue build_encode_quantizer(
+     std::vector<ggml_tensor *> & code_outputs,
+     core::TensorValue * z_q_out) {
+     auto x = encoder_latent;
++    const bool bf16 = weights.encoder_bf16_compute &&
++        (weights.pre_module.layers.front().attention.q_weight.type == GGML_TYPE_BF16 ||
++         weights.pre_module.layers.front().attention.q_weight.type == GGML_TYPE_F16);
+     for (const auto & stage : weights.downsample) {
+-        x = causal_conv1d(ctx, x, stage.first, kCodecDim, kCodecDim, 2, 2, 1, true);
+-        x = build_convnext(ctx, x, stage.second, kCodecDim);
++        x = causal_conv1d(ctx, x, stage.first, kCodecDim, kCodecDim, 2, 2, 1, true, nullptr, bf16);
++        x = build_convnext(ctx, x, stage.second, kCodecDim, nullptr, bf16);
++    }
++    x = build_window_transformer(ctx, constants, x, weights.pre_module, 128, nullptr, bf16);
++    if (ctx.backend_type == core::BackendType::Cpu) {
++        x = core::ensure_backend_addressable_layout(ctx, x);
+     }
+-    x = build_window_transformer(ctx, constants, x, weights.pre_module, 128);
+ 
+     auto residual = x;
+     auto quantize_one = [&](const QuantizerUnitWeights & quantizer, int64_t codebook_size) {
+-        auto projected = modules::Conv1dModule({kCodecDim, 8, 1, 1, 0, 1, true}).build(ctx, residual, quantizer.in_proj);
+-        auto projected_btd = l2_normalize_last(ctx, modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, projected));
++        const bool bf16 = weights.encoder_bf16_compute &&
++            (quantizer.in_proj.weight.type == GGML_TYPE_BF16 || quantizer.in_proj.weight.type == GGML_TYPE_F16);
++        if (bf16) {
++            residual = core::ensure_backend_addressable_layout(ctx, residual);
++            residual = core::wrap_tensor(ggml_round_bf16(ctx.ggml, residual.tensor), residual.shape, GGML_TYPE_F32);
++        }
++        auto projected = modules::Conv1dModule({kCodecDim, 8, 1, 1, 0, 1, true, bf16}).build(ctx, residual, quantizer.in_proj);
++        auto projected_btd = l2_normalize_last(ctx, modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, projected), bf16);
+         auto logits = modules::LinearModule({8, codebook_size, false, GGML_PREC_F32})
+                           .build(ctx, projected_btd, {quantizer.normalized_codebook, std::nullopt});
+         auto flat_logits = core::reshape_tensor(
+             ctx,
+             core::ensure_backend_addressable_layout(ctx, logits),
+             core::TensorShape::from_dims({logits.shape.dims[1], codebook_size}));
+-        auto * ids_raw = ggml_argmax(ctx.ggml, flat_logits.tensor);
++        auto * scores = flat_logits.tensor;
++        if (bf16) {
++            auto * encodings = core::ensure_backend_addressable_layout(ctx, projected_btd).tensor;
++            auto * codebook = ggml_cast(ctx.ggml, quantizer.normalized_codebook.tensor, GGML_TYPE_F32);
++            auto * encoding_norms = ggml_round_bf16(ctx.ggml,
++                ggml_sum_rows(ctx.ggml, ggml_round_bf16(ctx.ggml, ggml_sqr(ctx.ggml, encodings))));
++            auto * codebook_norms = ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml,
++                ggml_round_bf16(ctx.ggml, ggml_sum_rows(ctx.ggml,
++                    ggml_round_bf16(ctx.ggml, ggml_sqr(ctx.ggml, codebook))))));
++            auto * twice_dot = ggml_scale(ctx.ggml, ggml_round_bf16(ctx.ggml, scores), 2.0F);
++            auto * distance = ggml_round_bf16(ctx.ggml,
++                ggml_sub(ctx.ggml, ggml_repeat(ctx.ggml, encoding_norms, scores), twice_dot));
++            scores = ggml_neg(ctx.ggml, ggml_round_bf16(ctx.ggml, ggml_add(ctx.ggml, distance, codebook_norms)));
++            auto * maximum = ggml_pool_2d(ctx.ggml, scores, GGML_OP_POOL_MAX,
++                codebook_size, 1, codebook_size, 1, 0, 0);
++            auto * tied = ggml_scale_bias(ctx.ggml,
++                ggml_step(ctx.ggml, ggml_sub(ctx.ggml, ggml_repeat(ctx.ggml, maximum, scores), scores)), -1.0F, 1.0F);
++            std::vector<float> priorities(static_cast<size_t>(codebook_size));
++            for (int64_t i = 0; i < codebook_size; ++i) priorities[static_cast<size_t>(i)] = static_cast<float>(codebook_size - i);
++            auto priority = constants.make_tensor(core::TensorShape::from_dims({codebook_size}), GGML_TYPE_F32,
++                priorities.data(), priorities.size() * sizeof(float));
++            scores = ggml_mul(ctx.ggml, tied, priority.tensor);
++        }
++        auto * ids_raw = ggml_argmax(ctx.ggml, scores);
+         ggml_set_output(ids_raw);
+         code_outputs.push_back(ids_raw);
+         auto ids = core::reshape_tensor(
+             ctx,
+             core::wrap_tensor(ids_raw, core::TensorShape::from_dims({logits.shape.dims[1]}), GGML_TYPE_I32),
+             core::TensorShape::from_dims({1, logits.shape.dims[1]}));
+-        auto quantized = build_quantizer_out(ctx, ids, quantizer, codebook_size);
++        auto quantized = build_quantizer_out(ctx, ids, quantizer, codebook_size, false, bf16 ? &projected : nullptr);
+         residual = core::wrap_tensor(ggml_sub(ctx.ggml, residual.tensor, quantized.tensor), residual.shape, GGML_TYPE_F32);
++        if (bf16) residual = core::wrap_tensor(ggml_round_bf16(ctx.ggml, residual.tensor), residual.shape, GGML_TYPE_F32);
+     };
+     quantize_one(weights.semantic_quantizer, 4096);
+     for (const auto & quantizer : weights.residual_quantizers) {
+@@ -736,7 +915,20 @@ core::TensorValue build_encode_quantizer(
+     return x;
+ }
+ 
+-modules::Snake1dWeights load_snake(core::BackendWeightStore & store, const assets::TensorSource & source, const std::string & name, int64_t channels) {
++modules::Snake1dWeights load_snake(core::BackendWeightStore & store, const assets::TensorSource & source, const std::string & name, int64_t channels, bool bf16 = false) {
++    if (bf16) {
++        auto alpha = source.require_f32(name + ".alpha", {1, channels, 1});
++        core::round_f32_to_bf16_in_place(alpha);
++        std::vector<float> inverse(alpha.size());
++        for (size_t i = 0; i < alpha.size(); ++i) {
++            // TorchScript fuses Snake in F32 and rounds only its output.
++            const float denominator = alpha[i] + ggml_bf16_to_fp32(ggml_fp32_to_bf16(1.0e-9F));
++            inverse[i] = 1.0F / denominator;
++        }
++        const auto shape = core::TensorShape::from_dims({1, channels, 1});
++        return {store.make_f32(shape, std::move(alpha)),
++            store.make_f32(shape, std::move(inverse))};
++    }
+     return {store.make_f32(
+         core::TensorShape::from_dims({channels}),
+         source.require_f32(name + ".alpha", {1, channels, 1}))};
+@@ -775,16 +967,17 @@ ResidualUnitWeights load_residual_unit(
+     const assets::TensorSource & source,
+     const std::string & prefix,
+     assets::TensorStorageType storage_type,
+-    int64_t channels) {
++    int64_t channels,
++    bool bf16 = false) {
+     ResidualUnitWeights out;
+-    out.snake1 = load_snake(store, source, prefix + ".block.0", channels);
++    out.snake1 = load_snake(store, source, prefix + ".block.0", channels, bf16);
+     out.conv1 = binding::conv1d_from_named_source(
+         store,
+         source,
+         prefix + ".block.1.conv.weight",
+         prefix + ".block.1.conv.bias",
+         storage_type);
+-    out.snake2 = load_snake(store, source, prefix + ".block.2", channels);
++    out.snake2 = load_snake(store, source, prefix + ".block.2", channels, bf16);
+     out.conv2 = binding::conv1d_from_named_source(
+         store,
+         source,
+@@ -821,7 +1014,8 @@ QuantizerUnitWeights load_quantizer_unit(
+     const assets::TensorSource & source,
+     const std::string & prefix,
+     assets::TensorStorageType storage_type,
+-    int64_t codebook_size) {
++    int64_t codebook_size,
++    bool encoder_bf16_compute) {
+     QuantizerUnitWeights out;
+     out.in_proj = binding::conv1d_from_named_source(
+         store,
+@@ -836,11 +1030,16 @@ QuantizerUnitWeights load_quantizer_unit(
+         prefix + ".out_proj.bias",
+         storage_type);
+     const auto codebook = source.require_f32(prefix + ".codebook.weight", {codebook_size, 8});
++    // Reference encoding uses BF16 arithmetic independently of F16 GGUF storage.
++    const bool bf16 = encoder_bf16_compute &&
++        (out.in_proj.weight.type == GGML_TYPE_BF16 || out.in_proj.weight.type == GGML_TYPE_F16);
++    auto encoder_codebook = codebook;
++    if (bf16) core::round_f32_to_bf16_in_place(encoder_codebook);
+     out.codebook = store.make_from_f32(core::TensorShape::from_dims({codebook_size, 8}), storage_type, codebook);
+     out.normalized_codebook = store.make_from_f32(
+         core::TensorShape::from_dims({codebook_size, 8}),
+-        storage_type,
+-        normalized_rows(codebook, codebook_size, 8));
++        bf16 ? assets::TensorStorageType::BF16 : storage_type,
++        normalized_rows(encoder_codebook, codebook_size, 8, bf16));
+     return out;
+ }
+ 
+@@ -852,8 +1051,10 @@ std::shared_ptr<FishCodecWeights> load_weights(
+     core::BackendType backend_type,
+     size_t weight_context_bytes,
+     assets::TensorStorageType matmul_storage_type,
+-    assets::TensorStorageType conv_storage_type) {
++    assets::TensorStorageType conv_storage_type,
++    bool encoder_bf16_compute) {
+     auto weights = std::make_shared<FishCodecWeights>();
++    weights->encoder_bf16_compute = encoder_bf16_compute && backend_type == core::BackendType::Cuda;
+     weights->store = std::make_shared<core::BackendWeightStore>(backend, backend_type, "Fish DAC codec", weight_context_bytes);
+     auto & store = *weights->store;
+     const auto & encoder = binding_config.encoder_prefix;
+@@ -866,33 +1067,41 @@ std::shared_ptr<FishCodecWeights> load_weights(
+         encoder + ".block.0.conv.weight",
+         encoder + ".block.0.conv.bias",
+         conv_storage_type);
++    const auto encoder_matmul_storage = weights->encoder_bf16_compute &&
++        (matmul_storage_type == assets::TensorStorageType::Native || matmul_storage_type == assets::TensorStorageType::F16) &&
++        (weights->encoder_first.weight.type == GGML_TYPE_BF16 || weights->encoder_first.weight.type == GGML_TYPE_F16)
++        ? assets::TensorStorageType::BF16 : matmul_storage_type;
++    const bool bf16_encoder = weights->encoder_bf16_compute &&
++        (weights->encoder_first.weight.type == GGML_TYPE_BF16 || weights->encoder_first.weight.type == GGML_TYPE_F16);
++    const auto encoder_conv_storage = bf16_encoder && conv_storage_type == assets::TensorStorageType::Native
++        ? assets::TensorStorageType::BF16 : conv_storage_type;
+     int64_t encoder_channels = 64;
+     for (int64_t block_index = 0; block_index < 4; ++block_index) {
+         const std::string prefix = encoder + ".block." + std::to_string(block_index + 1) + ".block";
+         EncoderBlockWeights block;
+-        block.residual1 = load_residual_unit(store, source, prefix + ".0", conv_storage_type, encoder_channels);
+-        block.residual3 = load_residual_unit(store, source, prefix + ".1", conv_storage_type, encoder_channels);
+-        block.residual9 = load_residual_unit(store, source, prefix + ".2", conv_storage_type, encoder_channels);
+-        block.snake = load_snake(store, source, prefix + ".3", encoder_channels);
++        block.residual1 = load_residual_unit(store, source, prefix + ".0", encoder_conv_storage, encoder_channels, bf16_encoder);
++        block.residual3 = load_residual_unit(store, source, prefix + ".1", encoder_conv_storage, encoder_channels, bf16_encoder);
++        block.residual9 = load_residual_unit(store, source, prefix + ".2", encoder_conv_storage, encoder_channels, bf16_encoder);
++        block.snake = load_snake(store, source, prefix + ".3", encoder_channels, bf16_encoder);
+         block.conv = binding::conv1d_from_named_source(
+             store,
+             source,
+             prefix + ".4.conv.weight",
+             prefix + ".4.conv.bias",
+-            conv_storage_type);
++            encoder_conv_storage);
+         encoder_channels *= 2;
+         if (block_index == 3) {
+-            block.transformer = load_transformer(store, source, prefix + ".5", matmul_storage_type, 4);
++            block.transformer = load_transformer(store, source, prefix + ".5", encoder_matmul_storage, 4);
+         }
+         weights->encoder_blocks.push_back(std::move(block));
+     }
+-    weights->encoder_final_snake = load_snake(store, source, encoder + ".block.5", kCodecDim);
++    weights->encoder_final_snake = load_snake(store, source, encoder + ".block.5", kCodecDim, bf16_encoder);
+     weights->encoder_final = binding::conv1d_from_named_source(
+         store,
+         source,
+         encoder + ".block.6.conv.weight",
+         encoder + ".block.6.conv.bias",
+-        conv_storage_type);
++        encoder_conv_storage);
+ 
+     for (int64_t i = 0; i < 2; ++i) {
+         const std::string prefix = quantizer + ".downsample." + std::to_string(i);
+@@ -903,16 +1112,16 @@ std::shared_ptr<FishCodecWeights> load_weights(
+                 prefix + ".0.conv.weight",
+                 prefix + ".0.conv.bias",
+                 conv_storage_type),
+-            load_convnext(store, source, prefix + ".1", matmul_storage_type, kCodecDim),
++            load_convnext(store, source, prefix + ".1", encoder_matmul_storage, kCodecDim),
+         });
+     }
+-    weights->pre_module = load_transformer(store, source, quantizer + ".pre_module", matmul_storage_type, kCodecTransformerLayers);
++    weights->pre_module = load_transformer(store, source, quantizer + ".pre_module", encoder_matmul_storage, kCodecTransformerLayers);
+     weights->semantic_quantizer = load_quantizer_unit(
+         store,
+         source,
+         quantizer + ".semantic_quantizer.quantizers.0",
+         matmul_storage_type,
+-        config.semantic_codebook_size);
++        config.semantic_codebook_size, weights->encoder_bf16_compute);
+     for (int64_t i = 0; i < config.quantizer_codebooks; ++i) {
+         weights->residual_quantizers.push_back(
+             load_quantizer_unit(
+@@ -920,7 +1129,7 @@ std::shared_ptr<FishCodecWeights> load_weights(
+                 source,
+                 quantizer + ".quantizer.quantizers." + std::to_string(i),
+                 matmul_storage_type,
+-                config.residual_codebook_size));
++                config.residual_codebook_size, weights->encoder_bf16_compute));
+     }
+     weights->post_module = load_transformer(store, source, quantizer + ".post_module", matmul_storage_type, kCodecTransformerLayers);
+     for (int64_t i = 0; i < 2; ++i) {
+@@ -1015,7 +1224,8 @@ struct DecodeGraph {
+     }
+ 
+     ~DecodeGraph() {
+-        engine::core::release_backend_graph_resources(backend_, graph_);
++        ggml_backend_synchronize(backend_);
++        engine::core::release_backend_graph_resources(backend_, graph_, true);
+     }
+ 
+     bool matches(int64_t frames, ggml_backend_t backend, int threads) const {
+@@ -1132,7 +1342,8 @@ struct LatentDecodeGraph {
+     }
+ 
+     ~LatentDecodeGraph() {
+-        engine::core::release_backend_graph_resources(backend_, graph_);
++        ggml_backend_synchronize(backend_);
++        engine::core::release_backend_graph_resources(backend_, graph_, true);
+     }
+ 
+     bool matches(int64_t frames, ggml_backend_t backend, int threads) const {
+@@ -1253,7 +1464,8 @@ struct EncodeGraph {
+     }
+ 
+     ~EncodeGraph() {
+-        engine::core::release_backend_graph_resources(backend_, graph_);
++        ggml_backend_synchronize(backend_);
++        engine::core::release_backend_graph_resources(backend_, graph_, true);
+     }
+ 
+     bool matches(int64_t samples, int64_t frames, ggml_backend_t backend, int threads, bool want_latents) const {
+@@ -1499,7 +1711,8 @@ std::shared_ptr<const FishDacCodecComponent> FishDacCodecComponent::load_from_te
+         backend_type,
+         options.weight_context_bytes,
+         options.matmul_weight_storage_type,
+-        options.conv_weight_storage_type);
++        options.conv_weight_storage_type,
++        options.encoder_bf16_compute);
+     return std::shared_ptr<const FishDacCodecComponent>(new FishDacCodecComponent(std::move(impl)));
+ }
+ 
+diff --git a/src/framework/core/disk_expert_weight_store.cpp b/src/framework/core/disk_expert_weight_store.cpp
+index f28bffd..6758fda 100644
+--- a/src/framework/core/disk_expert_weight_store.cpp
++++ b/src/framework/core/disk_expert_weight_store.cpp
+@@ -8,8 +8,11 @@
+ #include <gguf.h>
+ 
+ #include <algorithm>
++#include <array>
+ #include <cstring>
++#include <cstdlib>
+ #include <fstream>
++#include <iomanip>
+ #include <map>
+ #include <stdexcept>
+ #include <unordered_set>
+@@ -48,6 +51,17 @@ public:
+         ~Staging() { if (buffer) ggml_backend_buffer_free(buffer); }
+         std::byte * data() { return buffer ? static_cast<std::byte *>(ggml_backend_buffer_get_base(buffer)) : bytes.data(); }
+     };
++    struct PipelineState {
++        ggml_backend_t transfer = nullptr;
++        std::array<std::unique_ptr<Staging>, 2> staging;
++        std::array<ggml_backend_event_t, 2> uploaded{};
++        std::array<bool, 2> pending{};
++        ~PipelineState() {
++            if (transfer) ggml_backend_synchronize(transfer);
++            for (auto event : uploaded) if (event) ggml_backend_event_free(event);
++            if (transfer) ggml_backend_free(transfer);
++        }
++    };
+ 
+     Impl(const std::filesystem::path & path, bool pin) : file(path, std::ios::binary), pin_experts(pin) {
+         if (!file) throw std::runtime_error("cannot open disk expert GGUF: " + path.string());
+@@ -82,6 +96,51 @@ public:
+                 tensor->ne[2], offset, expert_bytes}).second) throw std::runtime_error("duplicate expert bank: " + name);
+         }
+         mapped_file = io::read_binary_blob(path, true);
++        // Local opt-in research recorder. It only reads already-live tensors;
++        // captured requests must not be used as performance measurements.
++        if (const auto * trace = std::getenv("DRAMA_Q8_ROUTE_TRACE")) {
++            trace_meta.open(std::string(trace) + ".jsonl", std::ios::trunc);
++            trace_values.open(std::string(trace) + ".bin", std::ios::binary | std::ios::trunc);
++            if (!trace_meta || !trace_values) throw std::runtime_error("cannot create Q8 route capture");
++        }
++    }
++
++    bool detailed_capture(size_t group_id) {
++        const auto * request_option = std::getenv("DRAMA_Q8_ROUTE_TRACE_REQUEST");
++        const auto target_request = request_option ? std::strtoul(request_option, nullptr, 10) : 3;
++        const auto step = trace_steps[group_id];
++        return trace_request == target_request &&
++            (step < 24 || (step >= 96 && step < 104) || (step >= 192 && step < 200));
++    }
++
++    void capture(const std::vector<int32_t> & ids, size_t group_id) {
++        if (!trace_meta.is_open()) return;
++        auto & group = *groups.at(group_id);
++        const bool detailed = detailed_capture(group_id);
++        const uint32_t step = trace_steps[group_id]++;
++        trace_meta << "{\"request\":" << trace_request << ",\"step\":" << step
++                   << ",\"layer\":" << group_id << ",\"ids\":[";
++        for (size_t i = 0; i < ids.size(); ++i) trace_meta << (i ? "," : "") << ids[i];
++        trace_meta << "],\"resident\":[";
++        for (size_t i = 0; i < group.expert_ids.size(); ++i)
++            trace_meta << (i ? "," : "") << group.expert_ids[i];
++        trace_meta << "],\"detailed\":" << (detailed ? "true" : "false") << "}\n";
++        if (!detailed) return;
++        const auto & x = trace_hidden[group_id];
++        const auto & p = trace_probabilities[group_id];
++        if (x.size() != 2048 || p.size() != 256 || ids.size() != 8)
++            throw std::runtime_error("missing native Q8 live tensor capture");
++        std::vector<float> selected(8);
++        float total = 0;
++        for (size_t i = 0; i < ids.size(); ++i) total += selected[i] = p.at(ids[i]);
++        if (!(total > 0)) throw std::runtime_error("invalid captured route probability");
++        for (auto & value : selected) value /= total;
++        const uint32_t header[] = {trace_request, static_cast<uint32_t>(group_id), step, 2048, 8};
++        trace_values.write(reinterpret_cast<const char *>(header), sizeof(header));
++        trace_values.write(reinterpret_cast<const char *>(ids.data()), ids.size() * sizeof(int32_t));
++        trace_values.write(reinterpret_cast<const char *>(selected.data()), selected.size() * sizeof(float));
++        trace_values.write(reinterpret_cast<const char *>(x.data()), x.size() * sizeof(float));
++        if (!trace_values || !trace_meta) throw std::runtime_error("Q8 route capture write failed");
+     }
+ 
+     std::vector<int32_t> stage(std::vector<int32_t> ids, size_t index) {
+@@ -170,8 +229,20 @@ public:
+     std::vector<std::unique_ptr<Group>> groups;
+     std::map<std::string, size_t> routes;
+     std::map<ggml_backend_t, std::unique_ptr<Staging>> host_staging;
++    std::map<ggml_backend_t, std::unique_ptr<PipelineState>> pipelines;
+     uint64_t clock = 0;
+     Statistics stats;
++    std::unique_ptr<ggml_context, ContextDeleter> host_view_context;
++    std::map<std::pair<size_t, size_t>, ggml_tensor *> host_views;
++    std::vector<ggml_backend_buffer_t> host_view_buffers;
++    ~Impl() {
++        for (auto * buffer : host_view_buffers) ggml_backend_buffer_free(buffer);
++    }
++    std::ofstream trace_meta, trace_values;
++    uint32_t trace_request = 0;
++    std::map<size_t, uint32_t> trace_steps;
++    std::map<std::string, std::pair<size_t, bool>> trace_nodes;
++    std::map<size_t, std::vector<float>> trace_hidden, trace_probabilities;
+ };
+ 
+ DiskExpertWeightStore::DiskExpertWeightStore(const std::filesystem::path & path, bool pin_experts)
+@@ -268,9 +339,169 @@ TensorValue DiskExpertWeightStore::tensor(size_t group, size_t projection) const
+     return wrap_tensor(tensor, TensorShape::from_dims({tensor->ne[2], tensor->ne[1], tensor->ne[0]}), tensor->type);
+ }
+ 
++TensorValue DiskExpertWeightStore::host_tensor(size_t group_id, size_t projection_id) {
++    auto & group = *impl_->groups.at(group_id);
++    const auto & projection = group.projections.at(projection_id);
++    const auto key = std::make_pair(group_id, projection_id);
++    auto & tensor = impl_->host_views[key];
++    if (!tensor) {
++        if (!impl_->host_view_context) {
++            impl_->host_view_context.reset(ggml_init({4 * 1024 * 1024, nullptr, true}));
++            if (!impl_->host_view_context) throw std::runtime_error("cannot create host expert view context");
++        }
++        tensor = ggml_new_tensor_3d(impl_->host_view_context.get(), projection.type,
++                                   projection.input, projection.output, projection.experts);
++        auto * data = const_cast<std::byte *>(projection.host_data ? projection.host_data :
++            impl_->mapped_file.data() + projection.offset);
++        auto * buffer = ggml_backend_cpu_buffer_from_ptr(data, ggml_nbytes(tensor));
++        if (!buffer) throw std::runtime_error("cannot wrap native host expert source");
++        impl_->host_view_buffers.push_back(buffer);
++        ggml_backend_buffer_set_usage(buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
++        if (ggml_backend_tensor_alloc(buffer, tensor, data) != GGML_STATUS_SUCCESS)
++            throw std::runtime_error("cannot bind native host expert source");
++    }
++    return wrap_tensor(tensor, TensorShape::from_dims({tensor->ne[2], tensor->ne[1], tensor->ne[0]}), tensor->type);
++}
++
++std::vector<int32_t> DiskExpertWeightStore::resident_ids(size_t group) const {
++    return impl_->groups.at(group)->expert_ids;
++}
++
++void DiskExpertWeightStore::stage_pipeline(size_t group_id, const std::vector<int32_t> & ids, size_t width,
++    const std::function<void(const std::vector<int32_t> &, const std::vector<int32_t> &)> & compute) {
++    const auto start = std::chrono::steady_clock::now();
++    auto & group = *impl_->groups.at(group_id);
++    const std::unordered_set<int32_t> required(ids.begin(), ids.end());
++    if (!width || required.size() > group.expert_ids.size() || required.size() != ids.size())
++        throw std::runtime_error("invalid expert pipeline width/routes");
++    for (const auto id : ids)
++        if (id < 0 || id >= group.projections.front().experts)
++            throw std::runtime_error("pipeline expert ID out of range");
++    auto planned = group.expert_ids;
++    std::vector<int32_t> slots(ids.size());
++    std::vector<bool> missing(ids.size());
++    ++impl_->clock;
++    // All top-8 slots are protected, including groups not yet executed.
++    for (size_t lane = 0; lane < ids.size(); ++lane) {
++        auto found = std::find(planned.begin(), planned.end(), ids[lane]);
++        size_t slot = static_cast<size_t>(found - planned.begin());
++        if (found == planned.end()) {
++            slot = planned.size();
++            for (size_t candidate = 0; candidate < planned.size(); ++candidate) {
++                if (required.count(planned[candidate])) continue;
++                if (slot == planned.size() || group.last_used[candidate] < group.last_used[slot]) slot = candidate;
++            }
++            if (slot == planned.size()) throw std::runtime_error("no unprotected pipeline cache slot");
++            planned[slot] = ids[lane];
++            group.expert_ids[slot] = -1;
++            missing[lane] = true;
++        } else ++impl_->stats.cache_hits;
++        slots[lane] = static_cast<int32_t>(slot);
++        group.last_used[slot] = impl_->clock;
++    }
++    auto & state = impl_->pipelines[group.backend];
++    if (!impl_->pin_experts && std::find(missing.begin(), missing.end(), true) != missing.end()) {
++        impl_->file.clear();
++        impl_->file.seekg(0, std::ios::end);
++        if (impl_->file.tellg() < static_cast<std::streamoff>(impl_->mapped_file.size()))
++            throw std::runtime_error("failed to read selected pipeline expert: GGUF was truncated");
++    }
++    if (!state) {
++        state = std::make_unique<Impl::PipelineState>();
++        auto device = ggml_backend_get_device(group.backend);
++        state->transfer = ggml_backend_dev_init(device, nullptr);
++        if (!state->transfer) throw std::runtime_error("cannot create pipeline transfer backend");
++        const auto host_type = ggml_backend_dev_host_buffer_type(device);
++        size_t bytes = 0;
++        for (const auto & projection : group.projections) bytes += width * projection.expert_bytes;
++        if (!host_type) throw std::runtime_error("pipeline requires pinned staging");
++        for (size_t index = 0; index < 2; ++index) {
++            auto buffer = std::make_unique<Impl::Staging>();
++            buffer->buffer = ggml_backend_buft_alloc_buffer(host_type, bytes);
++            if (!buffer->buffer || ggml_backend_buffer_get_type(buffer->buffer) != host_type)
++                throw std::runtime_error("cannot allocate pipeline pinned staging");
++            buffer->capacity = bytes;
++            state->staging[index] = std::move(buffer);
++            state->uploaded[index] = ggml_backend_event_new(device);
++            if (!state->uploaded[index]) throw std::runtime_error("pipeline backend does not support events");
++        }
++        debug::timing_log_scalar("disk_experts.pipeline_host_staging_bytes", bytes * 2);
++    }
++    size_t bytes_needed = 0;
++    for (const auto & projection : group.projections) bytes_needed += width * projection.expert_bytes;
++    if (state->staging[0]->capacity < bytes_needed)
++        throw std::runtime_error("pipeline staging width changed within a session");
++    for (size_t begin = 0, sequence = 0; begin < ids.size(); begin += width, ++sequence) {
++        const auto end = std::min(ids.size(), begin + width);
++        const auto bank = sequence % 2;
++        if (state->pending[bank]) ggml_backend_event_synchronize(state->uploaded[bank]);
++        auto * staging = state->staging[bank]->data();
++        size_t offset = 0;
++        bool uploaded = false;
++        for (size_t projection_id = 0; projection_id < group.projections.size(); ++projection_id) {
++            const auto & projection = group.projections[projection_id];
++            size_t count = 0;
++            const auto gather = std::chrono::steady_clock::now();
++            for (size_t lane = begin; lane < end; ++lane) {
++                if (!missing[lane]) continue;
++                const auto * source = projection.host_data ? projection.host_data :
++                    impl_->mapped_file.data() + projection.offset;
++                if (!projection.host_data) {
++                    std::memcpy(staging + offset + count * projection.expert_bytes,
++                                source + ids[lane] * projection.expert_bytes, projection.expert_bytes);
++                    impl_->stats.bytes_read += projection.expert_bytes;
++                }
++                ++count;
++            }
++            impl_->stats.read_ms += debug::elapsed_ms(gather);
++            count = 0;
++            const auto upload = std::chrono::steady_clock::now();
++            for (size_t lane = begin; lane < end; ++lane) {
++                if (!missing[lane]) continue;
++                const auto * source = projection.host_data ?
++                    projection.host_data + ids[lane] * projection.expert_bytes :
++                    staging + offset + count * projection.expert_bytes;
++                ggml_backend_tensor_set_async(state->transfer, group.tensors[projection_id], source,
++                                              slots[lane] * projection.expert_bytes, projection.expert_bytes);
++                ++count;
++                uploaded = true;
++            }
++            impl_->stats.upload_ms += debug::elapsed_ms(upload);
++            offset += count * projection.expert_bytes;
++        }
++        if (uploaded) {
++            ggml_backend_event_record(state->uploaded[bank], state->transfer);
++            state->pending[bank] = true;
++            ggml_backend_event_wait(group.backend, state->uploaded[bank]);
++        }
++        std::vector<int32_t> local(slots.begin() + begin, slots.begin() + end);
++        std::vector<int32_t> lanes(end - begin);
++        for (size_t lane = 0; lane < lanes.size(); ++lane) lanes[lane] = static_cast<int32_t>(begin + lane);
++        compute(local, lanes);
++    }
++    group.expert_ids = std::move(planned);
++    impl_->stats.expert_loads += std::count(missing.begin(), missing.end(), true);
++    impl_->stats.stage_ms += debug::elapsed_ms(start);
++}
++
+ ggml_tensor * DiskExpertWeightStore::route(ModuleBuildContext & ctx, ggml_tensor * ids, size_t group) const {
+     if (ids->type != GGML_TYPE_I32) throw std::runtime_error("disk expert routing requires I32 IDs");
+     if (group >= impl_->groups.size()) throw std::out_of_range("disk expert group not found");
++    if (impl_->trace_meta.is_open()) {
++        auto * probabilities = ids->src[0];
++        auto * logits = probabilities ? probabilities->src[0] : nullptr;
++        auto * hidden = logits ? logits->src[1] : nullptr;
++        while (hidden && (hidden->op == GGML_OP_RESHAPE || hidden->op == GGML_OP_VIEW))
++            hidden = hidden->src[0];
++        if (ids->op != GGML_OP_TOP_K || !probabilities || probabilities->op != GGML_OP_SOFT_MAX ||
++            !hidden || ggml_nelements(hidden) != 2048 || ggml_nelements(probabilities) != 256)
++            throw std::runtime_error("unexpected Q8 trace graph at build");
++        for (auto entry : {std::make_pair(hidden, false), std::make_pair(probabilities, true)}) {
++            const auto name = "disk_experts.capture." + std::to_string(group) + (entry.second ? ".p" : ".x");
++            ggml_set_name(entry.first, name.c_str());
++            impl_->trace_nodes[name] = {group, entry.second};
++        }
++    }
+     auto * routed = ggml_dup(ctx.ggml, ids);
+     ggml_set_name(routed, ("disk_experts.route." + std::to_string(group)).c_str());
+     ggml_set_output(routed);
+@@ -281,7 +512,36 @@ std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vecto
+     return impl_->stage(expert_ids, group);
+ }
+ 
++std::vector<float> DiskExpertWeightStore::gather_bf16_rows(
++        const std::string & tensor_name, const std::vector<int32_t> & row_ids) const {
++    const auto found = impl_->projections.find(tensor_name);
++    if (found == impl_->projections.end()) throw std::runtime_error("host lookup matrix not found: " + tensor_name);
++    const auto & matrix = found->second;
++    if (matrix.type != GGML_TYPE_BF16 || matrix.experts != 1)
++        throw std::runtime_error("host lookup requires one native BF16 matrix");
++    const auto width = static_cast<size_t>(matrix.input);
++    std::vector<float> result(row_ids.size() * width);
++    for (size_t i = 0; i < row_ids.size(); ++i) {
++        const auto row = row_ids[i];
++        if (row < 0 || row >= matrix.output) throw std::runtime_error("host lookup row ID out of range");
++        const auto * source = impl_->mapped_file.data() + matrix.offset +
++                              static_cast<size_t>(row) * width * sizeof(ggml_bf16_t);
++        for (size_t column = 0; column < width; ++column) {
++            ggml_bf16_t value;
++            std::memcpy(&value, source + column * sizeof(value), sizeof(value));
++            result[i * width + column] = ggml_bf16_to_fp32(value);
++        }
++    }
++    return result;
++}
++
+ void DiskExpertWeightStore::invalidate_cache() {
++    if (impl_->trace_meta.is_open()) {
++        ++impl_->trace_request;
++        impl_->trace_steps.clear();
++        impl_->trace_hidden.clear();
++        impl_->trace_probabilities.clear();
++    }
+     for (auto & group : impl_->groups) {
+         std::fill(group->expert_ids.begin(), group->expert_ids.end(), -1);
+         std::fill(group->last_used.begin(), group->last_used.end(), 0);
+@@ -291,6 +551,16 @@ void DiskExpertWeightStore::invalidate_cache() {
+ 
+ bool DiskExpertWeightStore::evaluate(ggml_tensor * tensor, bool ask, void * store) {
+     auto & self = *static_cast<DiskExpertWeightStore *>(store);
++    const auto capture = self.impl_->trace_nodes.find(ggml_get_name(tensor));
++    if (capture != self.impl_->trace_nodes.end()) {
++        if (!ask && self.impl_->detailed_capture(capture->second.first)) {
++            auto & values = capture->second.second ? self.impl_->trace_probabilities[capture->second.first]
++                                                  : self.impl_->trace_hidden[capture->second.first];
++            values.resize(static_cast<size_t>(ggml_nelements(tensor)));
++            ggml_backend_tensor_get(tensor, values.data(), 0, values.size() * sizeof(float));
++        }
++        return true;
++    }
+     const auto found = self.impl_->routes.find(ggml_get_name(tensor));
+     if (found == self.impl_->routes.end()) return false;
+     if (!ask) {
+@@ -298,6 +568,7 @@ bool DiskExpertWeightStore::evaluate(ggml_tensor * tensor, bool ask, void * stor
+         std::vector<int32_t> ids(static_cast<size_t>(ggml_nelements(tensor)));
+         ggml_backend_tensor_get(tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
+         self.impl_->stats.stage_ms += debug::elapsed_ms(started);
++        self.impl_->capture(ids, found->second);
+         ids = self.impl_->stage(std::move(ids), found->second);
+         started = std::chrono::steady_clock::now();
+         ggml_backend_tensor_set(tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
+diff --git a/src/framework/modules/conv_modules.cpp b/src/framework/modules/conv_modules.cpp
+index d3f5b33..4f80167 100644
+--- a/src/framework/modules/conv_modules.cpp
++++ b/src/framework/modules/conv_modules.cpp
+@@ -540,6 +540,44 @@ core::TensorValue Conv1dModule::build(
+     const auto output_shape = core::TensorShape::from_dims(
+         {input.shape.dims[0], config_.out_channels, conv1d_output_frames(config_, input.shape.dims[2])});
+     const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
++    if (config_.bf16_compute) {
++        const auto weight_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weights.weight);
++        auto * weight = weight_contiguous.type == GGML_TYPE_BF16 ? weight_contiguous.tensor
++            : ggml_cast(ctx.ggml, ensure_f32(ctx, weight_contiguous).tensor, GGML_TYPE_BF16);
++        const auto build_batch = [&](const core::TensorValue & batch_input) {
++            ggml_tensor * columns;
++            if (ctx.backend_type == core::BackendType::Cuda) {
++                columns = ggml_im2col(ctx.ggml, weight, batch_input.tensor,
++                    config_.stride, 0, config_.padding, 0, config_.dilation, 0, false, GGML_TYPE_BF16);
++            } else {
++                auto * rounded_input = ggml_round_bf16(ctx.ggml, batch_input.tensor);
++                columns = ggml_im2col(ctx.ggml, weight, rounded_input,
++                    config_.stride, 0, config_.padding, 0, config_.dilation, 0, false, GGML_TYPE_F32);
++                columns = ggml_cast(ctx.ggml, columns, GGML_TYPE_BF16);
++            }
++            auto * projected = ggml_mul_mat(ctx.ggml,
++                ggml_reshape_2d(ctx.ggml, columns, columns->ne[0], output_shape.dims[2]),
++                ggml_reshape_2d(ctx.ggml, weight, columns->ne[0], config_.out_channels));
++            projected = ggml_round_bf16(ctx.ggml, projected);
++            if (config_.use_bias) {
++                if (!weights.bias) throw std::runtime_error("Conv1d bias is required");
++                core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.out_channels}), "bias");
++                auto * bias = ggml_round_bf16(ctx.ggml, ensure_f32(ctx, *weights.bias).tensor);
++                projected = ggml_add(ctx.ggml, projected, ggml_reshape_2d(ctx.ggml, bias, 1, config_.out_channels));
++                projected = ggml_round_bf16(ctx.ggml, projected);
++            }
++            return core::wrap_tensor(projected,
++                core::TensorShape::from_dims({1, config_.out_channels, output_shape.dims[2]}), GGML_TYPE_F32);
++        };
++        core::TensorValue result;
++        for (int64_t batch_index = 0; batch_index < input.shape.dims[0]; ++batch_index) {
++            const auto batch_input = view_batch_matrix(ctx, input_contiguous, batch_index,
++                config_.in_channels, input.shape.dims[2]);
++            const auto batch_output = build_batch(batch_input);
++            result = result.tensor ? ConcatModule({0}).build(ctx, result, batch_output) : batch_output;
++        }
++        return result;
++    }
+     const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "Conv1dModule");
+     core::TensorValue output;
+     if (is_conv1d_pertap_fast_path_eligible(ctx, config_, input) &&
+diff --git a/src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp b/src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
+index 815382e..ea6251b 100644
+--- a/src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
++++ b/src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
+@@ -403,6 +403,8 @@ std::vector<float> compute_rmvpe_log_mel(
+     const int64_t freq_bins = magnitude.shape[1];
+     const int64_t frames = magnitude.shape[2];
+     static const RmvpeMelFilterbank mel_filter = [] {
++        constexpr int64_t kNfft = 1024;
++        constexpr int64_t kSampleRate = 16000;
+         constexpr int64_t freq_bins = kNfft / 2 + 1;
+         std::vector<double> mel_points(static_cast<size_t>(kRmvpeMelBins + 2), 0.0);
+         const auto hz_to_mel = [](double hz) {
+diff --git a/src/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.cpp b/src/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.cpp
+index bb116f7..e4cc074 100644
+--- a/src/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.cpp
++++ b/src/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.cpp
+@@ -652,3 +652,6 @@ Qwen3AudioEmbeddings Qwen3AudioEncoderRuntime::encode(const Qwen3AudioFeatures &
+ }
+ 
+ }  // namespace engine::modules
++#if defined(_MSC_VER) && _MSC_VER < 1930
++#pragma optimize("", off)
++#endif
+diff --git a/tests/unittests/test_disk_expert_weight_store.cpp b/tests/unittests/test_disk_expert_weight_store.cpp
+index e1ba0c2..a0b154f 100644
+--- a/tests/unittests/test_disk_expert_weight_store.cpp
++++ b/tests/unittests/test_disk_expert_weight_store.cpp
+@@ -19,7 +19,14 @@ struct FixtureDirectory {
+     std::filesystem::path path = std::filesystem::temp_directory_path() /
+         ("audiocpp_disk_experts_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+     FixtureDirectory() { std::filesystem::create_directories(path); }
+-    ~FixtureDirectory() { std::error_code error; std::filesystem::remove_all(path, error); }
++    ~FixtureDirectory() {
++        std::error_code error;
++        const auto resolved = std::filesystem::weakly_canonical(path, error);
++        const auto parent = std::filesystem::weakly_canonical(std::filesystem::temp_directory_path(), error);
++        if (!error && resolved.is_absolute() && resolved.parent_path() == parent &&
++            resolved.filename().string().find("audiocpp_disk_experts_") == 0)
++            std::filesystem::remove_all(resolved, error);
++    }
+ };
+ struct ContextDeleter { void operator()(ggml_context * ctx) const { ggml_free(ctx); } };
+ struct BufferDeleter { void operator()(ggml_backend_buffer_t buffer) const { ggml_backend_buffer_free(buffer); } };
+@@ -32,6 +39,8 @@ int main(int argc, char ** argv) {
+         namespace assets = engine::assets;
+         engine::debug::configure_logging({true, std::nullopt});
+         const auto started = std::chrono::steady_clock::now();
++        bool lookup_only = false;
++        for (int i = 1; i < argc; ++i) lookup_only = lookup_only || std::string(argv[i]) == "--lookup-only";
+         core::BackendConfig config;
+         config.threads = 4;
+         if (argc > 1 && std::string(argv[1]) == "cuda") config.type = core::BackendType::Cuda;
+@@ -57,6 +66,14 @@ int main(int argc, char ** argv) {
+             std::memcpy(bytes.data(), values.data(), bytes.size());
+             entries.push_back({names[p], "F32", {12, 256, 256}, std::move(bytes)});
+         }
++        const std::string embedding_name = "test.embedding.weight";
++        std::vector<unsigned char> embedding_bytes(5 * 256 * sizeof(ggml_bf16_t));
++        for (size_t i = 0; i < 5 * 256; ++i) {
++            const uint16_t bits = static_cast<uint16_t>((i * 101u) & 0x7f7fu) |
++                                  static_cast<uint16_t>((i % 2) << 15);
++            std::memcpy(embedding_bytes.data() + i * sizeof(bits), &bits, sizeof(bits));
++        }
++        entries.push_back({embedding_name, "BF16", {5, 256}, embedding_bytes});
+         engine::io::write_safetensors_file(input, entries);
+         const std::vector<std::pair<assets::TensorStorageType, bool>> modes{
+             {assets::TensorStorageType::F32, false}, {assets::TensorStorageType::Q4_K, false},
+@@ -64,6 +81,7 @@ int main(int argc, char ** argv) {
+         for (const auto & [type, pin_experts] : modes) {
+             assets::GgufConversionOptions options;
+             options.type_overrides.push_back({"model.layers.0.mlp.experts.*", type});
++            options.type_overrides.push_back({embedding_name, assets::TensorStorageType::BF16});
+             assets::convert_tensor_sources_to_gguf({{input, ""}}, gguf, assets::TensorStorageType::F32,
+                 true, false, {}, {}, std::nullopt, options);
+             core::DiskExpertWeightStore disk(gguf, pin_experts);
+@@ -82,6 +100,59 @@ int main(int argc, char ** argv) {
+             if (pin_experts && disk.statistics().host_buffer_bytes == 0)
+                 throw std::runtime_error("pinned expert banks were not allocated");
+             auto source = assets::open_tensor_source(gguf);
++            for (size_t projection = 0; projection < names.size(); ++projection) {
++                const auto view = disk.host_tensor(group, projection);
++                const auto same = disk.host_tensor(group, projection);
++                const auto expected = source->require_tensor(names[projection], assets::TensorStorageType::Native,
++                    {12, 256, 256});
++                std::vector<std::byte> actual(ggml_nbytes(view.tensor));
++                ggml_backend_tensor_get(view.tensor, actual.data(), 0, actual.size());
++                if (view.tensor != same.tensor || actual.size() != expected.bytes.size() ||
++                    std::memcmp(actual.data(), expected.bytes.data(), actual.size()))
++                    throw std::runtime_error("native mapped/pinned host expert view changed source bytes");
++            }
++            if (disk.resident_ids(group) != std::vector<int32_t>(4, -1))
++                throw std::runtime_error("creating host expert views changed GPU placement");
++            {
++                // Compare host row reads with the actual backend lookup,
++                // including duplicate, reversed and last-row IDs.
++                core::BackendWeightStore lookup(execution.backend(), execution.backend_type(),
++                    "test.lookup", 1024 * 1024);
++                const auto table = lookup.load_tensor(*source, embedding_name,
++                    assets::TensorStorageType::Native, {5, 256});
++                lookup.upload();
++                std::unique_ptr<ggml_context, ContextDeleter> lookup_ctx(ggml_init({1024 * 1024, nullptr, true}));
++                const std::vector<int32_t> row_ids{4, 0, 3, 4, 1};
++                auto * lookup_ids = ggml_new_tensor_1d(lookup_ctx.get(), GGML_TYPE_I32, row_ids.size());
++                auto * lookup_output = ggml_get_rows(lookup_ctx.get(), table.tensor, lookup_ids);
++                auto * lookup_graph = ggml_new_graph_custom(lookup_ctx.get(), 32, false);
++                ggml_build_forward_expand(lookup_graph, lookup_output);
++                std::unique_ptr<ggml_backend_buffer, BufferDeleter> lookup_buffer(
++                    ggml_backend_alloc_ctx_tensors(lookup_ctx.get(), execution.backend()));
++                if (!lookup_buffer) throw std::runtime_error("lookup fixture allocation failed");
++                ggml_backend_tensor_set(lookup_ids, row_ids.data(), 0, row_ids.size() * sizeof(int32_t));
++                if (ggml_backend_graph_compute(execution.backend(), lookup_graph) != GGML_STATUS_SUCCESS)
++                    throw std::runtime_error("backend lookup failed");
++                const auto reference = core::read_tensor_f32(lookup_output);
++                source->release_storage();
++                const auto actual = disk.gather_bf16_rows(embedding_name, row_ids);
++                if (actual.size() != reference.size() ||
++                    std::memcmp(actual.data(), reference.data(), actual.size() * sizeof(float)))
++                    throw std::runtime_error("mapped BF16 lookup changed backend row values");
++                for (const int32_t invalid_row : {-1, 5}) {
++                    bool rejected = false;
++                    try { (void)disk.gather_bf16_rows(embedding_name, {invalid_row}); }
++                    catch (const std::runtime_error &) { rejected = true; }
++                    if (!rejected) throw std::runtime_error("host lookup accepted invalid row");
++                }
++                bool rejected = false;
++                try { (void)disk.gather_bf16_rows(names[0], {0}); }
++                catch (const std::runtime_error &) { rejected = true; }
++                if (!rejected) throw std::runtime_error("host lookup accepted expert bank");
++                core::release_backend_graph_resources(execution.backend(), lookup_graph, true);
++                std::cout << "mapped_bf16_lookup_matches_backend=true rows=5\n";
++            }
++            if (lookup_only) continue;
+             const auto expected_type = type == assets::TensorStorageType::Q4_K ? "q4_k" : "f32";
+             if (source->require_metadata(names[0]).dtype != expected_type)
+                 throw std::runtime_error("fixture expert dtype mismatch");
+diff --git a/src/community_models/fish_drama3/hybrid_decode.inc b/src/community_models/fish_drama3/hybrid_decode.inc
+new file mode 100644
+--- /dev/null
++++ b/src/community_models/fish_drama3/hybrid_decode.inc
+@@ -0,0 +1,488 @@
++// Included inside backbone.cpp's private implementation namespace.
++// Single-frame cooperation; prefill and recurrent-state ownership stay outside.
++class Drama3ExpertWorker {
++public:
++    Drama3ExpertWorker() {
++        thread_ = std::thread([this] {
++            std::unique_lock<std::mutex> lock(mutex_);
++            for (;;) {
++                condition_.wait(lock, [&] { return stop_ || pending_; });
++                if (stop_) return;
++                auto task = std::move(task_);
++                pending_ = false;
++                lock.unlock();
++                try { task(); } catch (...) { error_ = std::current_exception(); }
++                lock.lock();
++                done_ = true;
++                condition_.notify_all();
++            }
++        });
++    }
++    ~Drama3ExpertWorker() {
++        { std::lock_guard<std::mutex> lock(mutex_); stop_ = true; }
++        condition_.notify_all();
++        thread_.join();
++    }
++    void launch(std::function<void()> task) {
++        std::lock_guard<std::mutex> lock(mutex_);
++        if (!done_) throw std::runtime_error("Drama 3 CPU expert worker is busy");
++        task_ = std::move(task); error_ = nullptr; done_ = false; pending_ = true;
++        condition_.notify_all();
++    }
++    void wait() {
++        std::unique_lock<std::mutex> lock(mutex_);
++        condition_.wait(lock, [&] { return done_; });
++        if (error_) std::rethrow_exception(error_);
++    }
++private:
++    std::thread thread_;
++    std::mutex mutex_;
++    std::condition_variable condition_;
++    std::function<void()> task_;
++    std::exception_ptr error_;
++    bool stop_ = false, pending_ = false, done_ = true;
++};
++
++class Drama3HybridDecodeGraph {
++    using Context = std::unique_ptr<ggml_context, GgmlContextDeleter>;
++    using Buffer = std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>,
++                                   decltype(&ggml_backend_buffer_free)>;
++    using Allocator = std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter>;
++    struct Policy {
++        int calls = 0, chosen = -1;
++        std::array<double, 3> total{};
++        std::array<int, 3> samples{};
++    };
++    struct QuantGuard { Drama3HybridDecodeGraph * owner; bool shared_input; };
++public:
++    Drama3HybridDecodeGraph(core::ExecutionContext & execution, const Drama3BackboneWeights & weights,
++        const Drama3BackboneDecoderConfig & config, ggml_tensor * input, ggml_tensor * positions,
++        ggml_tensor * cache_slot, ggml_tensor * mask, int64_t cache_steps,
++        const std::vector<ggml_tensor *> & keys, const std::vector<ggml_tensor *> & values,
++        const std::vector<ggml_tensor *> & tails, const std::vector<ggml_tensor *> & states)
++        : execution_(execution), weights_(weights), config_(config), x_(input),
++          cpu_(core::BackendConfig{core::BackendType::Cpu, 0, std::max(1, std::min(4, execution.config().threads))}),
++          device_buffer_(nullptr, ggml_backend_buffer_free),
++          host_buffer_(nullptr, ggml_backend_buffer_free), handoff_(nullptr, ggml_backend_buffer_free) {
++        const auto h = config.hidden_size, k = config.experts_per_token;
++        if (const auto * value = std::getenv("DRAMA_GGUF_PIPELINE_WIDTH"))
++            pipeline_width_ = static_cast<size_t>(std::atoi(value));
++        compatible_quantization_ = std::getenv("DRAMA_Q8_RAW_CPU") == nullptr;
++        input_guard_ = {this, true}; activation_guard_ = {this, false};
++        if (k != 8 || h != 2048 || !weights.disk_store)
++            throw std::runtime_error("cooperative decode currently supports native Drama 3 top-8");
++        context_.reset(ggml_init({32 * 1024 * 1024, nullptr, true}));
++        cpu_context_.reset(ggml_init({16 * 1024 * 1024, nullptr, true}));
++        inputs_.reset(ggml_init({1024 * 1024, nullptr, true}));
++        cpu_inputs_.reset(ggml_init({1024 * 1024, nullptr, true}));
++        if (!context_ || !cpu_context_ || !inputs_ || !cpu_inputs_)
++            throw std::runtime_error("cannot allocate cooperative decoder contexts");
++        hidden_ = ggml_new_tensor_3d(inputs_.get(), GGML_TYPE_F32, h, 1, 1);
++        residual_ = ggml_new_tensor_3d(inputs_.get(), GGML_TYPE_F32, h, 1, 1);
++        shared_ = ggml_new_tensor_2d(inputs_.get(), GGML_TYPE_F32, h, 1);
++        scales_ = ggml_new_tensor_2d(inputs_.get(), GGML_TYPE_F32, k, 1);
++        ids_ = ggml_new_tensor_2d(inputs_.get(), GGML_TYPE_I32, k, 1);
++        gpu_slots_ = ggml_new_tensor_2d(inputs_.get(), GGML_TYPE_I32, k, 1);
++        gpu_lanes_ = ggml_new_tensor_1d(inputs_.get(), GGML_TYPE_I32, k);
++        cpu_lanes_ = ggml_new_tensor_1d(inputs_.get(), GGML_TYPE_I32, k);
++        partial_ = ggml_new_tensor_2d(inputs_.get(), GGML_TYPE_F32, h, k);
++        uploaded_ = ggml_new_tensor_2d(inputs_.get(), GGML_TYPE_F32, h, k);
++        final_hidden_ = ggml_new_tensor_3d(inputs_.get(), GGML_TYPE_F32, h, 1, 1);
++        for (auto * t : {hidden_, residual_, shared_, scales_, ids_, gpu_slots_, gpu_lanes_,
++                         cpu_lanes_, partial_, uploaded_, final_hidden_}) ggml_set_input(t);
++        device_buffer_.reset(ggml_backend_alloc_ctx_tensors(inputs_.get(), execution.backend()));
++        cpu_x_ = ggml_new_tensor_3d(cpu_inputs_.get(), GGML_TYPE_F32, h, 1, 1);
++        cpu_ids_ = ggml_new_tensor_2d(cpu_inputs_.get(), GGML_TYPE_I32, k, 1);
++        cpu_output_ = ggml_new_tensor_2d(cpu_inputs_.get(), GGML_TYPE_F32, h, k);
++        for (auto * t : {cpu_x_, cpu_ids_, cpu_output_}) ggml_set_input(t);
++        host_buffer_.reset(ggml_backend_alloc_ctx_tensors(cpu_inputs_.get(), cpu_.backend()));
++        const auto pinned_type = ggml_backend_dev_host_buffer_type(ggml_backend_get_device(execution.backend()));
++        if (!pinned_type) throw std::runtime_error("cooperative decode requires CUDA host buffers");
++        handoff_.reset(ggml_backend_buft_alloc_buffer(pinned_type, (h + h * k) * sizeof(float) + k * sizeof(int32_t)));
++        if (!device_buffer_ || !host_buffer_ || !handoff_ ||
++            ggml_backend_buffer_get_type(handoff_.get()) != pinned_type)
++            throw std::runtime_error("cannot allocate bounded cooperative handoff");
++        host_x_ = static_cast<float *>(ggml_backend_buffer_get_base(handoff_.get()));
++        host_partial_ = host_x_ + h;
++        host_ids_ = reinterpret_cast<int32_t *>(host_partial_ + h * k);
++        core::ModuleBuildContext ctx{context_.get(), "drama3_backbone.hybrid_decode", execution.backend_type()};
++        const auto shape = core::TensorShape::from_dims({1, 1, h});
++        auto x = core::wrap_tensor(x_, shape);
++        auto pos = core::wrap_tensor(positions, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
++        auto slot = core::wrap_tensor(cache_slot, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
++        auto attention_mask = core::wrap_tensor(mask,
++            core::TensorShape::from_dims({1, 1, 1, cache_steps}), GGML_TYPE_F16);
++        size_t full = 0, linear = 0;
++        for (size_t index = 0; index < weights.layers.size(); ++index) {
++            const auto & layer = weights.layers[index];
++            auto * route = ggml_new_graph_custom(ctx.ggml, 1024, false);
++            auto attention = round_activation(ctx,
++                modules::GemmaRMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm), config);
++            if (layer.full_attention) {
++                attention = full_attention_cached(ctx, attention, pos, slot, attention_mask,
++                    core::wrap_tensor(keys.at(full), core::TensorShape::from_dims(
++                        {1, cache_steps, config.kv_heads, config.head_dim})),
++                    core::wrap_tensor(values.at(full), core::TensorShape::from_dims(
++                        {1, cache_steps, config.kv_heads, config.head_dim})), *layer.full, config);
++                ++full;
++            } else {
++                const auto state_size = ggml_nelements(states.at(linear));
++                auto out = linear_attention_cached(ctx, attention,
++                    core::wrap_tensor(tails.at(linear), core::TensorShape::from_dims(
++                        {1, tails.at(linear)->ne[1], tails.at(linear)->ne[0]})),
++                    core::wrap_tensor(states.at(linear), core::TensorShape::from_dims({1, 1, state_size})),
++                    *layer.linear, config);
++                ggml_build_forward_expand(route, ggml_cpy(ctx.ggml, out.next_conv_tail.tensor, tails.at(linear)));
++                ggml_build_forward_expand(route, ggml_cpy(ctx.ggml, out.next_recurrent_state.tensor, states.at(linear)));
++                attention = std::move(out.output);
++                ++linear;
++            }
++            auto residual = round_activation(ctx, modules::AddModule{}.build(ctx, x, attention), config);
++            auto normalized = round_activation(ctx,
++                modules::GemmaRMSNormModule({h, config.rms_norm_eps, true, false})
++                    .build(ctx, residual, layer.post_norm), config);
++            const auto moe = build_moe_inputs(ctx, normalized, layer, config);
++            for (const auto & pair : std::vector<std::pair<ggml_tensor *, ggml_tensor *>>{
++                     {residual.tensor, residual_}, {normalized.tensor, hidden_}, {moe.scales, scales_}, {moe.ids, ids_}})
++                ggml_build_forward_expand(route, ggml_cpy(ctx.ggml, pair.first, pair.second));
++            route_graphs_.push_back(route); gpu_graphs_.push_back(route);
++            auto * shared = ggml_new_graph_custom(ctx.ggml, 128, false);
++            ggml_build_forward_expand(shared, ggml_cpy(ctx.ggml,
++                build_shared_expert(ctx, core::wrap_tensor(hidden_, shape), layer, config), shared_));
++            shared_graphs_.push_back(shared); gpu_graphs_.push_back(shared);
++            std::array<ggml_tensor *, 3> host_weights{};
++            for (size_t projection = 0; projection < 3; ++projection) {
++                host_weights[projection] = weights.disk_store->host_tensor(layer.disk_group, projection).tensor;
++                if (host_weights[projection]->type != GGML_TYPE_Q8_0)
++                    throw std::runtime_error("cooperative decode currently requires Q8_0 expert weights");
++            }
++            std::vector<ggml_cgraph *> gpu_counts(9), cpu_counts(9);
++            for (int count = 1; count <= 8; ++count) {
++                auto * graph = ggml_new_graph_custom(ctx.ggml, 128, false);
++                auto * slots = ggml_view_2d(ctx.ggml, gpu_slots_, count, 1, count * sizeof(int32_t), 0);
++                auto * gate = ggml_mul_mat_id(ctx.ggml, layer.expert_gate.tensor, hidden_, slots);
++                auto * up = ggml_mul_mat_id(ctx.ggml, layer.expert_up.tensor, hidden_, slots);
++                auto * activated = ggml_mul(ctx.ggml, ggml_silu(ctx.ggml, gate), up);
++                auto * output = ggml_mul_mat_id(ctx.ggml, layer.expert_down.tensor, activated, slots);
++                auto * lanes = ggml_view_1d(ctx.ggml, gpu_lanes_, count, 0);
++                ggml_build_forward_expand(graph, ggml_set_rows(ctx.ggml, partial_,
++                    ggml_reshape_2d(ctx.ggml, output, h, count), lanes));
++                gpu_counts[count] = graph; gpu_graphs_.push_back(graph);
++                auto * cpu_ctx = cpu_context_.get();
++                graph = ggml_new_graph_custom(cpu_ctx, 128, false);
++                auto * ids = ggml_view_2d(cpu_ctx, cpu_ids_, count, 1, count * sizeof(int32_t), 0);
++                auto * cpu_input = compatible_quantization_ ? compatible_quantize(cpu_ctx, cpu_x_, &input_guard_) : cpu_x_;
++                gate = ggml_mul_mat_id(cpu_ctx, host_weights[0], cpu_input, ids);
++                up = ggml_mul_mat_id(cpu_ctx, host_weights[1], cpu_input, ids);
++                activated = ggml_mul(cpu_ctx, ggml_silu(cpu_ctx, gate), up);
++                if (compatible_quantization_) activated = compatible_quantize(cpu_ctx, activated, &activation_guard_);
++                output = ggml_mul_mat_id(cpu_ctx, host_weights[2], activated, ids);
++                auto * destination = ggml_view_2d(cpu_ctx, cpu_output_, h, count, h * sizeof(float), 0);
++                ggml_build_forward_expand(graph, ggml_cpy(cpu_ctx,
++                    ggml_reshape_2d(cpu_ctx, output, h, count), destination));
++                cpu_counts[count] = graph; cpu_graphs_.push_back(graph);
++            }
++            gpu_experts_.push_back(std::move(gpu_counts));
++            cpu_experts_.push_back(std::move(cpu_counts));
++        }
++        cpu_scatter_.resize(9);
++        for (int count = 1; count <= 8; ++count) {
++            auto * graph = ggml_new_graph_custom(ctx.ggml, 64, false);
++            auto * values = ggml_view_2d(ctx.ggml, uploaded_, h, count, h * sizeof(float), 0);
++            ggml_build_forward_expand(graph, ggml_set_rows(ctx.ggml, partial_, values,
++                ggml_view_1d(ctx.ggml, cpu_lanes_, count, 0)));
++            cpu_scatter_[count] = graph; gpu_graphs_.push_back(graph);
++        }
++        finish_ = ggml_new_graph_custom(ctx.ggml, 128, false);
++        auto * partial = ggml_reshape_3d(ctx.ggml, partial_, h, k, 1);
++        auto * weighted = ggml_mul(ctx.ggml, partial, ggml_reshape_3d(ctx.ggml, scales_, 1, k, 1));
++        auto * reduced = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weighted, 1, 0, 2, 3));
++        reduced = ggml_reshape_2d(ctx.ggml, ggml_sum_rows(ctx.ggml, reduced), h, 1);
++        auto combined = round_activation(ctx,
++            core::wrap_tensor(ggml_reshape_3d(ctx.ggml, ggml_add(ctx.ggml, reduced, shared_), h, 1, 1), shape), config);
++        combined = round_activation(ctx,
++            modules::AddModule{}.build(ctx, core::wrap_tensor(residual_, shape), combined), config);
++        ggml_build_forward_expand(finish_, ggml_cpy(ctx.ggml, combined.tensor, x_));
++        gpu_graphs_.push_back(finish_);
++        final_ = ggml_new_graph_custom(ctx.ggml, 128, false);
++        auto normalized = round_activation(ctx,
++            modules::GemmaRMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, weights.final_norm), config);
++        ggml_build_forward_expand(final_, ggml_cpy(ctx.ggml, normalized.tensor, final_hidden_));
++        gpu_graphs_.push_back(final_);
++        plan(execution_, gpu_graphs_, gpu_allocator_, nullptr);
++        plan(cpu_, cpu_graphs_, cpu_allocator_, &cpu_plans_);
++        policies_.resize(weights.layers.size());
++        profile_key_ = weights.source_identity + "|" + std::to_string(config.expert_cache_size) + "|" +
++            std::to_string(cache_steps) + "|" + std::to_string(cpu_.config().threads) + "|decode-v6-rank4-safe024-guard8e5|" +
++            ggml_backend_dev_description(ggml_backend_get_device(cpu_.backend())) + "|" +
++            ggml_backend_dev_description(ggml_backend_get_device(execution_.backend()));
++        if (const auto * identifier = std::getenv("PROCESSOR_IDENTIFIER")) profile_key_ += "|" + std::string(identifier);
++        profile_key_ += compatible_quantization_ ? "|cuda-round" : "|ggml-round";
++        if (!config.decode_profile.empty()) {
++            uint64_t key_hash = 14695981039346656037ull;
++            for (const auto byte : profile_key_) { key_hash ^= static_cast<unsigned char>(byte); key_hash *= 1099511628211ull; }
++            const auto prefix = std::filesystem::path(config.decode_profile);
++            profile_path_ = prefix.has_extension()
++                ? prefix.parent_path() / (prefix.stem().string() + "-" + std::to_string(key_hash) + ".json")
++                : prefix / ("decode-" + std::to_string(key_hash) + ".json");
++        }
++        load_profile();
++        worker_ = std::make_unique<Drama3ExpertWorker>();
++    }
++    ~Drama3HybridDecodeGraph() {
++        worker_.reset();
++        ggml_backend_synchronize(execution_.backend());
++        for (auto * graph : gpu_graphs_) core::release_backend_graph_resources(execution_.backend(), graph, true);
++        cpu_plans_.clear();
++        debug::timing_log_scalar("drama3.hybrid.cpu_expert_jobs", cpu_jobs_);
++        debug::timing_log_scalar("drama3.hybrid.gpu_expert_jobs", gpu_jobs_);
++        debug::timing_log_scalar("drama3.hybrid.guarded_expert_jobs", guarded_jobs_);
++    }
++    std::vector<float> run() {
++        const auto h = config_.hidden_size;
++        for (size_t layer = 0; layer < route_graphs_.size(); ++layer) {
++            compute(route_graphs_[layer]);
++            ggml_backend_tensor_get_async(execution_.backend(), ids_, host_ids_, 0, 8 * sizeof(int32_t));
++            if (!pipeline_width_)
++                ggml_backend_tensor_get_async(execution_.backend(), hidden_, host_x_, 0, h * sizeof(float));
++            ggml_backend_synchronize(execution_.backend());
++            auto & policy = policies_[layer];
++            const bool calibrating = config_.decode_cpu_experts == -1 && policy.chosen < 0;
++            const int candidate = calibrating ? policy.calls % 3 : policy.chosen;
++            const int budget = config_.decode_cpu_experts >= 0 ? static_cast<int>(config_.decode_cpu_experts) :
++                candidate == 0 ? 0 : candidate == 1 ? 2 : 4;
++            const bool keep_hits = config_.decode_cpu_experts >= 0 ? config_.decode_keep_hits : true;
++            const auto started = std::chrono::steady_clock::now();
++            const auto resident = weights_.disk_store->resident_ids(weights_.layers[layer].disk_group);
++            std::vector<int32_t> cpu_ids, cpu_lanes, gpu_ids, gpu_lanes;
++            // Retain the leading half of routing contributions on GPU.
++            // Preserving hits alone can otherwise send a cold top-1 to CPU
++            // when several lower-ranked experts happen to be resident.
++            const int first_cpu_lane = config_.decode_cpu_experts == -1 || budget <= 4 ? 4 : 0;
++            for (int lane = 7; lane >= first_cpu_lane && cpu_lanes.size() < static_cast<size_t>(budget); --lane)
++                if (!keep_hits || std::find(resident.begin(), resident.end(), host_ids_[lane]) == resident.end())
++                    cpu_lanes.push_back(lane);
++            std::sort(cpu_lanes.begin(), cpu_lanes.end());
++            for (int lane = 0; lane < 8; ++lane) {
++                if (std::find(cpu_lanes.begin(), cpu_lanes.end(), lane) != cpu_lanes.end()) cpu_ids.push_back(host_ids_[lane]);
++                else { gpu_ids.push_back(host_ids_[lane]); gpu_lanes.push_back(lane); }
++            }
++            boundary_mask_.store(0, std::memory_order_relaxed);
++            if (!cpu_ids.empty()) worker_->launch([this, layer, cpu_ids] {
++                ggml_backend_tensor_set(cpu_x_, host_x_, 0, config_.hidden_size * sizeof(float));
++                ggml_backend_tensor_set(cpu_ids_, cpu_ids.data(), 0, cpu_ids.size() * sizeof(int32_t));
++                auto * graph = cpu_experts_[layer][cpu_ids.size()];
++                if (core::compute_graph(cpu_, graph, cpu_plans_.at(graph)) != GGML_STATUS_SUCCESS)
++                    throw std::runtime_error("native CPU expert execution failed");
++                ggml_backend_tensor_get(cpu_output_, host_partial_, 0,
++                    config_.hidden_size * cpu_ids.size() * sizeof(float));
++            });
++            // Submit shared GPU work while CPU experts and weight gathering proceed.
++            compute(shared_graphs_[layer]);
++            try {
++                if (!gpu_ids.empty()) {
++                    if (pipeline_width_) {
++                        size_t sequence = 0;
++                        weights_.disk_store->stage_pipeline(weights_.layers[layer].disk_group, gpu_ids, pipeline_width_,
++                            [&](const std::vector<int32_t> & slots, const std::vector<int32_t> & lanes) {
++                                // Keep async source bytes alive until next layer's
++                                // necessary route readback has completed.
++                                auto & stable_slots = pipeline_slots_.at(sequence);
++                                auto & stable_lanes = pipeline_lanes_.at(sequence++);
++                                std::copy(slots.begin(), slots.end(), stable_slots.begin());
++                                std::copy(lanes.begin(), lanes.end(), stable_lanes.begin());
++                                ggml_backend_tensor_set_async(execution_.backend(), gpu_slots_, stable_slots.data(),
++                                                              0, slots.size() * sizeof(int32_t));
++                                ggml_backend_tensor_set_async(execution_.backend(), gpu_lanes_, stable_lanes.data(),
++                                                              0, lanes.size() * sizeof(int32_t));
++                                compute(gpu_experts_[layer][slots.size()]);
++                                if (std::getenv("DRAMA_GGUF_PIPELINE_SERIAL"))
++                                    ggml_backend_synchronize(execution_.backend());
++                            });
++                    } else {
++                        const auto slots = weights_.disk_store->stage(weights_.layers[layer].disk_group, gpu_ids);
++                        ggml_backend_tensor_set_async(execution_.backend(), gpu_slots_, slots.data(), 0, slots.size() * sizeof(int32_t));
++                        ggml_backend_tensor_set_async(execution_.backend(), gpu_lanes_, gpu_lanes.data(), 0, gpu_lanes.size() * sizeof(int32_t));
++                        compute(gpu_experts_[layer][gpu_ids.size()]);
++                    }
++                }
++                if (!cpu_ids.empty()) {
++                    worker_->wait();
++                    ggml_backend_tensor_set_async(execution_.backend(), uploaded_, host_partial_, 0,
++                        h * cpu_ids.size() * sizeof(float));
++                    ggml_backend_tensor_set_async(execution_.backend(), cpu_lanes_, cpu_lanes.data(), 0, cpu_lanes.size() * sizeof(int32_t));
++                    compute(cpu_scatter_[cpu_ids.size()]);
++                    const auto guarded = boundary_mask_.load(std::memory_order_relaxed);
++                    if (guarded) {
++                        std::vector<int32_t> retry_ids, retry_lanes;
++                        for (size_t i = 0; i < cpu_ids.size(); ++i)
++                            if (guarded & (1u << i)) { retry_ids.push_back(cpu_ids[i]); retry_lanes.push_back(cpu_lanes[i]); }
++                        const auto slots = weights_.disk_store->stage(weights_.layers[layer].disk_group, retry_ids);
++                        ggml_backend_tensor_set_async(execution_.backend(), gpu_slots_, slots.data(), 0, slots.size() * sizeof(int32_t));
++                        ggml_backend_tensor_set_async(execution_.backend(), gpu_lanes_, retry_lanes.data(), 0, retry_lanes.size() * sizeof(int32_t));
++                        compute(gpu_experts_[layer][retry_ids.size()]);
++                        guarded_jobs_ += retry_ids.size();
++                    }
++                }
++                compute(finish_);
++            } catch (...) {
++                if (!cpu_ids.empty()) worker_->wait();
++                throw;
++            }
++            cpu_jobs_ += cpu_ids.size(); gpu_jobs_ += gpu_ids.size();
++            if (calibrating) {
++                ggml_backend_synchronize(execution_.backend());
++                // First encounter warms graph capture and CPU plans. Later
++                // samples use real frames, without extra autoregressive work.
++                if (policy.calls >= 3) {
++                    policy.total[candidate] += debug::elapsed_ms(started);
++                    ++policy.samples[candidate];
++                }
++                if (++policy.calls >= 9) {
++                    policy.chosen = 0;
++                    for (int i = 1; i < 3; ++i)
++                        if (policy.total[i] / policy.samples[i] <
++                            policy.total[policy.chosen] / policy.samples[policy.chosen]) policy.chosen = i;
++                    debug::timing_log_scalar(("drama3.hybrid.layer_" + std::to_string(layer) + "_policy").c_str(), policy.chosen);
++                }
++            }
++        }
++        save_profile();
++        compute(final_);
++        ggml_backend_synchronize(execution_.backend());
++        return core::read_tensor_f32(final_hidden_);
++    }
++private:
++    size_t pipeline_width_ = 0;
++    std::array<std::array<int32_t, 8>, 4> pipeline_slots_{}, pipeline_lanes_{};
++    static void quantize_cuda_style(ggml_tensor * output, int ith, int nth, void * userdata) {
++        auto * guard = static_cast<QuantGuard *>(userdata);
++        const auto * input = output->src[0];
++        GGML_ASSERT(input->type == GGML_TYPE_F32 && ggml_is_contiguous(input));
++        const auto * values = static_cast<const float *>(input->data);
++        auto * target = static_cast<unsigned char *>(output->data);
++        const int64_t blocks = ggml_nelements(input) / 32;
++        for (int64_t block = ith; block < blocks; block += nth) {
++            float maximum = 0;
++            for (int i = 0; i < 32; ++i) maximum = std::max(maximum, std::abs(values[block * 32 + i]));
++            const float scale = maximum / 127.0F;
++            const auto half = ggml_fp32_to_fp16(scale);
++            std::memcpy(target + block * 34, &half, sizeof(half));
++            for (int i = 0; i < 32; ++i) {
++                const float scaled = scale == 0 ? 0 : values[block * 32 + i] / scale;
++                const float fraction = std::abs(scaled) - std::floor(std::abs(scaled));
++                if (std::abs(fraction - 0.5F) <= 0.00008F) {
++                    const unsigned int bit = guard->shared_input ? 0xffu :
++                        1u << static_cast<unsigned int>(block * 32 / input->ne[0]);
++                    guard->owner->boundary_mask_.fetch_or(bit, std::memory_order_relaxed);
++                }
++                const auto q = static_cast<int>(std::round(scaled));
++                target[block * 34 + 2 + i] = static_cast<unsigned char>(static_cast<int8_t>(std::max(-127, std::min(127, q))));
++            }
++        }
++    }
++    static ggml_tensor * compatible_quantize(ggml_context * ctx, ggml_tensor * input, QuantGuard * guard) {
++        ggml_tensor * args[] = {input};
++        return ggml_custom_4d(ctx, GGML_TYPE_Q8_0, input->ne[0], input->ne[1], input->ne[2], input->ne[3],
++            args, 1, quantize_cuda_style, GGML_N_TASKS_MAX, guard);
++    }
++    void compute(ggml_cgraph * graph) {
++        // All phases use one stream and one ordered workspace. Synchronize
++        // only at real CPU handoff/readback boundaries, not after every phase.
++        if (ggml_backend_graph_compute_async(execution_.backend(), graph) != GGML_STATUS_SUCCESS)
++            throw std::runtime_error("cooperative GPU phase failed");
++    }
++    static void plan(core::ExecutionContext & execution, const std::vector<ggml_cgraph *> & graphs,
++                     Allocator & allocator, std::map<ggml_cgraph *, core::HostGraphPlan> * plans) {
++        allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
++        ggml_cgraph * largest = nullptr;
++        size_t maximum = 0;
++        for (auto * graph : graphs) {
++            size_t bytes = 0;
++            ggml_gallocr_reserve_n_size(allocator.get(), graph, nullptr, nullptr, &bytes);
++            if (!largest || bytes > maximum) { largest = graph; maximum = bytes; }
++        }
++        if (!ggml_gallocr_reserve(allocator.get(), largest))
++            throw std::runtime_error("cannot reserve cooperative phase workspace");
++        for (auto * graph : graphs) {
++            if (!ggml_gallocr_reserve(allocator.get(), graph) || !ggml_gallocr_alloc_graph(allocator.get(), graph))
++                throw std::runtime_error("cannot allocate cooperative phase workspace");
++            if (plans) core::prepare_host_graph_plan(execution, graph, (*plans)[graph]);
++        }
++    }
++    void load_profile() {
++        if (config_.decode_cpu_experts != -1 || config_.decode_profile.empty()) return;
++        try {
++            const auto profile = io::json::parse_file(profile_path_);
++            if (io::json::require_string(profile, "key") != profile_key_) return;
++            const auto & values = profile.require("policies").as_array();
++            if (values.size() != policies_.size()) return;
++            for (const auto & value : values) if (value.as_i64() < 0 || value.as_i64() > 2) return;
++            for (size_t i = 0; i < values.size(); ++i) policies_[i].chosen = static_cast<int>(values[i].as_i64());
++            profile_saved_ = true;
++            debug::timing_log_scalar("drama3.hybrid.profile_hit", 1);
++        } catch (const std::exception &) {
++            // A missing/incomplete profile triggers bounded measurement.
++        }
++    }
++    void save_profile() {
++        if (profile_saved_ || config_.decode_cpu_experts != -1 || config_.decode_profile.empty()) return;
++        for (const auto & policy : policies_) if (policy.chosen < 0) return;
++        io::json::Value::Array values;
++        for (const auto & policy : policies_) values.push_back(io::json::Value::make_number(policy.chosen));
++        try {
++            const auto path = profile_path_;
++            if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
++            const auto temporary = std::filesystem::path(path.string() + "." +
++                std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp");
++            {
++                std::ofstream output(temporary);
++                output << io::json::stringify(io::json::Value::make_object({
++                    {"key", io::json::Value::make_string(profile_key_)},
++                    {"policies", io::json::Value::make_array(std::move(values))}
++                }));
++                output.close();
++                if (!output) throw std::runtime_error("cannot write cooperative calibration profile");
++            }
++            std::error_code error;
++            std::filesystem::rename(temporary, path, error);
++            if (error) {
++                // Windows rename cannot replace an existing invalid cache file.
++                std::filesystem::remove(path, error);
++                error.clear();
++                std::filesystem::rename(temporary, path, error);
++            }
++            if (error) std::filesystem::remove(temporary, error);
++            else debug::timing_log_scalar("drama3.hybrid.profile_saved", 1);
++        } catch (const std::exception &) {
++            debug::timing_log_scalar("drama3.hybrid.profile_write_failed", 1);
++        }
++        // Optional cache persistence must not prevent an otherwise valid request.
++        profile_saved_ = true;
++    }
++    core::ExecutionContext & execution_;
++    const Drama3BackboneWeights & weights_;
++    Drama3BackboneDecoderConfig config_;
++    ggml_tensor * x_;
++    core::ExecutionContext cpu_;
++    Context context_, cpu_context_, inputs_, cpu_inputs_;
++    Buffer device_buffer_, host_buffer_, handoff_;
++    Allocator gpu_allocator_, cpu_allocator_;
++    std::vector<ggml_cgraph *> gpu_graphs_, cpu_graphs_, route_graphs_, shared_graphs_, cpu_scatter_;
++    std::vector<std::vector<ggml_cgraph *>> gpu_experts_, cpu_experts_;
++    std::map<ggml_cgraph *, core::HostGraphPlan> cpu_plans_;
++    ggml_cgraph * finish_ = nullptr, * final_ = nullptr;
++    ggml_tensor * hidden_, * residual_, * shared_, * scales_, * ids_, * gpu_slots_, * gpu_lanes_, * cpu_lanes_;
++    ggml_tensor * partial_, * uploaded_, * final_hidden_, * cpu_x_, * cpu_ids_, * cpu_output_;
++    float * host_x_, * host_partial_;
++    int32_t * host_ids_;
++    std::vector<Policy> policies_;
++    std::string profile_key_;
++    std::filesystem::path profile_path_;
++    bool profile_saved_ = false;
++    bool compatible_quantization_ = false;
++    QuantGuard input_guard_{}, activation_guard_{};
++    std::atomic<unsigned int> boundary_mask_{0};
++    uint64_t cpu_jobs_ = 0, gpu_jobs_ = 0, guarded_jobs_ = 0;
++    std::unique_ptr<Drama3ExpertWorker> worker_;
++};

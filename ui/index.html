@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN" class="compact-studio" data-view="generate" data-startup="loading">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f8f9fb">
+  <script>
+    (() => {
+      let saved;
+      try { saved = sessionStorage.getItem('drama3.ui.view'); } catch (_) { /* optional storage */ }
+      document.documentElement.dataset.view = ['generate', 'scene', 'voices', 'takes', 'settings', 'audio-edit'].includes(saved)
+        ? saved : 'generate';
+    })();
+  </script>
+  <script src="/assets/startup.js" onerror="document.documentElement.dataset.startup='error'"></script>
+  <title>Drama 3 Studio</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/studio.css">
+</head>
+<body>
+  <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4"/></symbol>
+    <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 5h14M12 5v14m-4 0h8"/></symbol>
+    <symbol id="i-scene" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M8 4l3 5m3-5 3 5m-7 4 5 3-5 3z"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6m3-3v5l3 2"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+    <symbol id="i-github" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.14.68-3.8-1.33-3.8-1.33-.51-1.3-1.26-1.65-1.26-1.65-1.03-.7.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.73 2.65 1.23 3.3.94.1-.73.4-1.23.72-1.52-2.5-.28-5.13-1.25-5.13-5.57 0-1.23.44-2.24 1.17-3.03-.12-.29-.51-1.43.11-2.98 0 0 .96-.3 3.1 1.16a10.8 10.8 0 0 1 5.65 0c2.16-1.46 3.1-1.16 3.1-1.16.62 1.55.23 2.69.12 2.98.73.79 1.17 1.8 1.17 3.03 0 4.33-2.64 5.29-5.16 5.56.4.35.76 1.02.76 2.07v3.12c0 .3.2.65.77.54A11.25 11.25 0 0 0 12 .75Z"/></symbol>
+    <symbol id="i-youtube" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M23.5 6.2a3 3 0 0 0-2.1-2.12C19.55 3.56 12 3.56 12 3.56s-7.55 0-9.4.52A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.12c1.85.52 9.4.52 9.4.52s7.55 0 9.4-.52a3 3 0 0 0 2.1-2.12A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8Z"/><path fill="#fff" stroke="none" d="m9.6 15.6 6.25-3.6L9.6 8.4z"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 8a8 8 0 1 0 0 8m0-13v5h-5"/></symbol>
+    <symbol id="i-unplug" viewBox="0 0 24 24"><path d="m19 5 3-3m-20 20 3-3"/><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/><path d="M7.5 13.5 10 11m.5 5.5L13 14"/><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v13m-5-5 5 5 5-5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/><rect x="10" y="10" width="4" height="4" rx="1"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8 5 7 7-7 7"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14m8-14v14"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="m11 4-6 5H2v6h3l6 5zm5 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></symbol>
+    <symbol id="i-muted" viewBox="0 0 24 24"><path d="m11 4-6 5H2v6h3l6 5zm5 5 6 6m-6 0 6-6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-headphones" viewBox="0 0 24 24"><path d="M4 14v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="12" width="4" height="8" rx="2"/><rect x="17" y="12" width="4" height="8" rx="2"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18m-9-9a19 19 0 0 1 0 18 19 19 0 0 1 0-18"/></symbol>
+  </defs></svg>
+  <a class="skip-link" href="#main-content" data-i18n="Skip to workspace">Skip to workspace</a>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark"><img src="/assets/drama3-fish-mark.svg" alt="" width="40" height="24"></div><strong>drama<span class="brand-number">3</span></strong></div>
+      <div class="side-label" data-i18n="WORKSPACE">WORKSPACE</div>
+      <nav class="workspace-nav" aria-label="Workspace" data-i18n-aria-label="Workspace">
+        <button class="nav" data-view="generate"><span><svg class="icon"><use href="#i-text"/></svg></span><span data-i18n="Create">Create</span></button>
+        <button class="nav" data-view="scene"><span><svg class="icon"><use href="#i-scene"/></svg></span><span data-i18n="Dialogue">Dialogue</span></button>
+        <button class="nav" data-view="voices"><span><svg class="icon"><use href="#i-mic"/></svg></span><span data-i18n="Voices">Voices</span></button>
+        <button class="nav" data-view="takes"><span><svg class="icon"><use href="#i-history"/></svg></span><span data-i18n="History">History</span></button>
+        <button class="nav" data-view="settings"><span><svg class="icon"><use href="#i-settings"/></svg></span><span data-i18n="Settings">Settings</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="local-card"><div class="local-card-title"><span class="local-dot"></span><b data-i18n="Local workspace">Local workspace</b></div><div class="device-summary"><svg class="icon"><use href="#i-cpu"/></svg><span id="hero-hardware" data-i18n="Detecting hardware">Detecting hardware</span></div><small id="hero-memory" data-i18n="Automatic placement">Automatic placement</small></div>
+        <div class="side-version"><span>Drama 3 Studio</span></div>
+      </div>
+    </aside>
+    <main class="main" id="main-content">
+      <header class="topbar">
+        <div class="page-title"><span class="eyebrow">DRAMA 3 STUDIO</span><h1 id="view-title"></h1></div>
+        <div class="top-actions"><div class="engine-indicator"><span class="status-dot" id="engine-dot"></span><span id="engine-status"><span data-i18n="Checking hardware…">Checking hardware…</span></span></div><div class="toolbar-divider"></div><label class="ui-language-control" for="ui-language"><svg class="icon"><use href="#i-globe"/></svg><span class="sr-only" data-i18n="UI language">UI language</span><select id="ui-language" aria-label="UI language" data-i18n-aria-label="UI language"><option value="zh-CN" lang="zh-CN">简体中文</option><option value="en" lang="en">English</option><option value="ja" lang="ja">日本語</option><option value="ko" lang="ko">한국어</option></select></label><button class="icon-btn" id="release-resources" type="button" title="Release resources" data-i18n-title="Release resources" aria-label="Release resources" data-i18n-aria-label="Release resources" disabled><svg class="icon"><use href="#i-unplug"/></svg></button><button class="icon-btn" id="refresh-btn" title="Refresh" data-i18n-title="Refresh" aria-label="Refresh" data-i18n-aria-label="Refresh"><svg class="icon"><use href="#i-refresh"/></svg></button></div>
+      </header>
+      <div class="workspace-frame">
+        <div id="startup-state" role="status" aria-live="polite">
+          <span class="startup-spinner" aria-hidden="true"></span>
+          <span class="startup-loading" data-i18n="Opening workspace…">Opening workspace…</span>
+          <div class="startup-failure">
+            <strong data-i18n="Could not open the workspace.">Could not open the workspace.</strong>
+            <p id="startup-error"></p>
+            <a href="" class="secondary-btn" data-i18n="Reload page">Reload page</a>
+          </div>
+        </div>
+      <div id="workspace-content" aria-busy="true" inert>
+      <section class="model-switcher" aria-label="Model selection" data-i18n-aria-label="Model selection">
+        <div class="model-icon"><svg class="icon"><use href="#i-cpu"/></svg></div>
+        <div class="model-picker"><label for="active-model" data-i18n="Generation model">Generation model</label><select id="active-model" disabled><option value="" data-i18n="Loading models…">Loading models…</option></select></div>
+        <button id="apply-active-model" class="secondary-btn" disabled><span data-i18n="Switch model">Switch model</span></button><button id="manage-models" class="text-btn"><span data-i18n="Manage models">Manage models</span><svg class="icon"><use href="#i-chevron"/></svg></button>
+        <p id="active-model-status" class="model-status" role="status" aria-live="polite"><span data-i18n="Loading models…">Loading models…</span></p>
+      </section>
+      <section class="view" id="view-generate">
+        <div class="workspace-grid generation-grid">
+          <div class="panel compose-panel">
+            <div class="panel-head"><div class="panel-heading"><svg class="icon"><use href="#i-text"/></svg><h2 data-i18n="Your script">Your script</h2></div><select id="mode" aria-label="Generation mode" data-i18n-aria-label="Generation mode"><option value="tts" data-i18n="Text to speech">Text to speech</option><option value="revision" data-i18n="Director revision">Director revision</option><option value="edit" data-i18n="Continuation edit">Continuation edit</option><option value="infill" data-i18n="Local infill">Local infill</option><option value="stream" data-i18n="Text stream">Text stream</option><option value="audio_stream" data-i18n="Frame audio stream">Frame audio stream</option></select></div>
+            <div class="voice-section clone-section" id="clone-section">
+              <div class="transcription-heading reference-heading"><label class="field-label" for="clone-audio" data-i18n="Reference audio">Reference audio</label></div>
+              <label class="upload-zone clone-upload-zone" id="clone-upload-zone" for="clone-audio">
+                <input id="clone-audio" class="file-input" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a,audio/*">
+                <span class="upload-icon"><svg class="icon"><use href="#i-upload"/></svg></span>
+                <b data-i18n="Upload audio to clone a voice">Upload audio to clone a voice</b>
+                <span data-i18n="WAV, MP3, FLAC, OGG or M4A">WAV, MP3, FLAC, OGG or M4A</span>
+              </label>
+              <details id="clone-upload-preview" class="upload-preview reference-material hidden" open>
+                <summary class="reference-compact-heading"><span class="reference-compact-copy"><strong id="clone-file-name"></strong><span id="clone-summary-transcript" class="reference-compact-transcript"></span></span><span id="clone-summary-duration" class="field-help"></span><button id="clone-summary-play" type="button" class="reference-compact-play icon-btn" aria-label="Preview voice" data-i18n-aria-label="Preview voice"></button><button id="clone-summary-remove" type="button" class="selected-voice-clear icon-btn" title="Remove audio" data-i18n-title="Remove audio" aria-label="Remove audio" data-i18n-aria-label="Remove audio"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></summary>
+                <div class="clone-file-heading"><div class="clone-file-actions"><button id="replace-clone-audio" type="button" class="text-btn" data-i18n="Replace audio">Replace audio</button><button id="remove-clone-audio" type="button" class="text-btn" data-i18n="Remove audio">Remove audio</button></div></div>
+                <audio id="clone-file-audio" controls preload="metadata" data-selection="true"></audio>
+                <div class="reference-wave-actions"><button id="crop-clone-audio" type="button" class="text-btn" disabled data-i18n="Use selected audio">Use selected audio</button><button id="restore-clone-audio" type="button" class="text-btn hidden" data-i18n="Restore original audio">Restore original audio</button><span id="clone-crop-status" class="field-help" role="status"></span></div>
+                <div class="transcription-heading"><label class="field-label" for="clone-transcript" data-i18n="Reference transcript">Reference transcript</label><button id="transcribe-clone" type="button" class="text-btn" data-i18n="Transcribe again">Transcribe again</button></div>
+                <span id="clone-asr-status" class="field-help reference-status" role="status" aria-live="polite" aria-atomic="true" hidden></span>
+                <textarea id="clone-transcript" class="compact-input" placeholder="The exact words spoken in the reference audio." data-i18n-placeholder="The exact words spoken in the reference audio."></textarea>
+                <div class="transcription-footer"><button id="apply-asr-text" class="text-btn hidden" type="button" data-i18n="Use recognized text">Use recognized text</button></div>
+              </details>
+              <div id="clone-note" class="form-note" role="status" aria-live="polite"></div>
+              <div id="reference-prewarm-status" class="reference-prewarm-status" role="status" aria-live="polite" hidden>
+                <span id="reference-prewarm-message"></span>
+                <button id="reference-prewarm-cancel" type="button" class="text-btn" data-i18n="Cancel warm-up">Cancel warm-up</button>
+              </div>
+              <details class="saved-voice-options" id="saved-voice-options">
+                <summary><span data-i18n="Choose from voice library">Choose from voice library</span><span id="voice-hint" class="field-help"></span><svg class="icon disclosure-arrow"><use href="#i-chevron"/></svg></summary>
+                <div class="section-heading"><span></span><button class="text-btn" data-view="voices"><span data-i18n="Manage voices">Manage voices</span><svg class="icon"><use href="#i-chevron"/></svg></button></div>
+                <div class="voice-picks" id="voice-picks"></div>
+              </details>
+              <button type="button" id="default-voice" class="text-btn no-reference selected" aria-pressed="true"><span data-i18n="Generate without a reference">Generate without a reference</span><span class="selection-check"><svg class="icon"><use href="#i-check"/></svg></span></button>
+            </div>
+            <div id="previous-source-preview" class="edit-source-card hidden">
+              <div class="edit-source-heading"><strong data-i18n="Source audio">Source audio</strong><button id="reload-previous-source" class="text-btn" type="button" data-i18n="Load source preview">Load source preview</button></div>
+              <audio id="previous-source-audio" controls preload="metadata" data-selection="true"></audio>
+              <p class="field-help" data-i18n="Revision and continuation regenerate the target speech. To preserve audio around an edit, select a region and use Local infill.">Revision and continuation regenerate the target speech. To preserve audio around an edit, select a region and use Local infill.</p>
+              <button id="edit-previous-selection" class="secondary-btn" type="button" disabled data-i18n="Edit selected region">Edit selected region</button>
+            </div>
+            <div id="infill-fields" class="conditional hidden">
+              <details id="infill-source-location" class="infill-frame-details" open><summary data-i18n="Source take">Source take</summary><div class="field-grid source-fields"><div><label class="field-label" for="source-take" data-i18n="Source take">Source take</label><input id="source-take" class="input" placeholder=".take.json / .take.npz"></div><button id="inspect-infill-source" class="secondary-btn source-inspect" type="button" data-i18n="Load source preview">Load source preview</button></div></details>
+              <div id="infill-source-preview" class="edit-source-card hidden">
+                <div class="edit-source-heading"><strong data-i18n="Select audio to replace">Select audio to replace</strong></div>
+                <audio id="infill-source-audio" controls preload="metadata" data-selection="true" data-selection-required="true"></audio>
+                <p id="infill-source-info" class="field-help"></p>
+                <div class="field-grid"><div><label class="field-label" for="start-time" data-i18n="Start seconds">Start seconds</label><input id="start-time" class="input" type="number" min="0" step="0.001"></div><div><label class="field-label" for="end-time" data-i18n="End seconds">End seconds</label><input id="end-time" class="input" type="number" min="0" step="0.001"></div></div>
+                <div class="stream-actions"><button id="mark-infill-start" class="text-btn" type="button" data-i18n="Use playhead as start">Use playhead as start</button><button id="mark-infill-end" class="text-btn" type="button" data-i18n="Use playhead as end">Use playhead as end</button></div>
+              </div>
+              <details class="infill-frame-details"><summary data-i18n="Frame boundaries">Frame boundaries</summary><div class="field-grid"><div><label class="field-label" for="start-frame" data-i18n="Start frame">Start frame</label><input id="start-frame" class="input" type="number" min="0" value="0"></div><div><label class="field-label" for="end-frame" data-i18n="End frame">End frame</label><input id="end-frame" class="input" type="number" min="0" value="1"></div></div></details>
+            </div>
+            <label class="field-label" for="text" data-i18n="Text to speak">Text to speak</label>
+            <div class="editor-area"><textarea id="text" class="text-input">你好，这是一次本地语音测试。</textarea><div class="editor-meta"><div class="editor-quick-actions"><span data-i18n="Text / transcript">Text / transcript</span><button id="clear-text" class="text-btn" data-i18n="Clear text">Clear text</button></div><span id="text-count"></span></div></div>
+            <div id="stream-fields" class="conditional hidden"><label class="field-label" for="chunks"><span data-i18n="Incoming chunks">Incoming chunks</span><small data-i18n="one per line">one per line</small></label><textarea id="chunks" class="compact-input" placeholder="早上好。&#10;我们开始今天的测试。" data-i18n-placeholder="早上好。&#10;我们开始今天的测试。"></textarea><label class="check-field"><input id="stream-live" type="checkbox"><span data-i18n="Keep input open and append more text during generation">Keep input open and append more text during generation</span></label><p class="field-help" data-i18n="One chunk of lookahead is needed. Finish input to generate the final chunk.">One chunk of lookahead is needed. Finish input to generate the final chunk.</p></div>
+            <details class="advanced-settings" id="advanced-settings"><summary><svg class="icon"><use href="#i-settings"/></svg><span data-i18n="Generation settings">Generation settings</span><small data-i18n="Optional">Optional</small><svg class="icon disclosure-arrow"><use href="#i-chevron"/></svg></summary><div class="advanced-content"><div class="field-grid"><div><label class="field-label" for="direction"><span data-i18n="Direction">Direction</span><small data-i18n="optional">optional</small></label><input id="direction" class="input" placeholder="Softer and warmer than the previous take" data-i18n-placeholder="Softer and warmer than the previous take"></div><div><label class="field-label" for="language"><span data-i18n="Speech language">Speech language</span><small data-i18n="optional">optional</small></label><input id="language" class="input" placeholder="en / zh / ja / ko"></div></div><label class="field-label" for="previous-take"><span data-i18n="Previous take">Previous take</span><small data-i18n="revision / edit context">revision / edit context</small></label><div class="source-path-row"><input id="previous-take" class="input" placeholder="Choose a successful take from Takes &amp; Edit" data-i18n-placeholder="Choose a successful take from Takes &amp; Edit"><button id="inspect-previous-source" class="secondary-btn" type="button" data-i18n="Load source preview">Load source preview</button></div><div class="field-grid three"><div><label class="field-label" for="duration"><span data-i18n="Audio tokens">Audio tokens</span><small data-i18n="optional">optional</small></label><input id="duration" class="input" type="number" min="1" placeholder="auto" data-i18n-placeholder="auto"></div><div><label class="field-label" for="seed" data-i18n="Seed">Seed</label><input id="seed" class="input" type="number" value="123"></div><div><label class="field-label" for="max-frames" data-i18n="Max frames">Max frames</label><input id="max-frames" class="input" type="number" value="768"></div></div></div></details>
+            <div class="compose-footer"><span class="generation-hint"><kbd>Ctrl ↵</kbd></span><button class="primary-btn" id="submit-job"><span data-i18n="Generate">Generate</span><svg class="icon"><use href="#i-arrow"/></svg></button></div>
+          </div>
+          <aside class="panel monitor-panel">
+            <div class="panel-head"><div class="panel-heading"><svg class="icon"><use href="#i-wave"/></svg><h2 data-i18n="Output">Output</h2></div><span class="badge" id="job-badge"><span data-i18n="IDLE">IDLE</span></span></div>
+            <div class="monitor-meta"><span id="job-title"><span data-i18n="Ready">Ready</span></span><button class="text-btn hidden" id="cancel-job" data-i18n="Cancel">Cancel</button></div>
+            <div class="progress-wrap"><div class="progress-track"><div id="progress-bar"></div></div><div class="progress-row" role="status"><span id="progress-stage"><span data-i18n="Waiting for a request">Waiting for a request</span></span><span id="progress-count"></span></div></div>
+            <p id="result-error" class="studio-error" role="alert" hidden></p>
+            <div id="result-box" class="result-box hidden"></div>
+            <div id="live-stream-controls" class="conditional hidden"><label class="field-label" for="live-stream-text" data-i18n="Next text chunk">Next text chunk</label><textarea id="live-stream-text" class="compact-input" placeholder="Append another line…" data-i18n-placeholder="Append another line…"></textarea><div class="stream-actions"><button id="push-stream" class="secondary-btn" data-i18n="Append text">Append text</button><button id="finish-stream" class="secondary-btn" data-i18n="Finish input">Finish input</button></div><p id="live-stream-status" class="field-help"></p></div>
+            <div id="output-placeholder" class="output-placeholder"><div class="empty-state output-empty"><div class="empty-illustration"><svg class="icon"><use href="#i-headphones"/></svg></div><b data-i18n="No audio yet">No audio yet</b></div></div>
+            <div class="output-footer hidden"><button id="view-latest-take" class="secondary-btn hidden"><span data-i18n="Open latest result">Open latest result</span><svg class="icon"><use href="#i-arrow"/></svg></button></div>
+          </aside>
+        </div>
+      </section>
+      <section class="view" id="view-audio-edit" aria-label="Edit audio" data-i18n-aria-label="Edit audio"></section>
+      <section class="view" id="view-scene">
+        <div class="workspace-grid scene-grid">
+          <section class="dialogue-composer" aria-label="Dialogue" data-i18n-aria-label="Dialogue">
+            <div id="dialogue-editor-area" class="dialogue-editor-area">
+              <label class="sr-only" for="dialogue-script" data-i18n="Dialogue script">Dialogue script</label>
+              <textarea id="dialogue-script" data-dialogue="true" aria-label="Dialogue script" data-i18n-aria-label="Dialogue script" placeholder="S1:&#10;S2:"></textarea>
+            </div>
+            <div class="compose-footer"><span></span><button class="primary-btn" id="submit-scene"><span data-i18n="Generate dialogue">Generate dialogue</span><svg class="icon"><use href="#i-arrow"/></svg></button></div>
+          </section>
+          <aside class="dialogue-speakers" aria-labelledby="dialogue-speakers-title">
+            <div class="dialogue-speakers-heading"><h2 id="dialogue-speakers-title" data-i18n="Speakers">Speakers</h2><button class="icon-btn" id="add-character" type="button" title="Add speaker" data-i18n-title="Add speaker" aria-label="Add speaker" data-i18n-aria-label="Add speaker"></button></div>
+            <div id="characters" class="dialogue-speaker-list"></div>
+          </aside>
+        </div>
+      </section>
+      <section class="view" id="view-voices">
+        <div class="voice-library-toolbar">
+          <label class="library-search" for="voice-search"><svg class="icon"><use href="#i-search"/></svg><input id="voice-search" type="search" placeholder="Search your voices…" data-i18n-placeholder="Search your voices…" aria-label="Search your voices…" data-i18n-aria-label="Search your voices…"></label>
+          <span class="badge" id="voice-count">0</span>
+          <button id="add-voice" class="primary-btn" type="button" disabled><svg class="icon"><use href="#i-plus"/></svg><span data-i18n="Add a voice">Add a voice</span></button>
+        </div>
+        <div id="voice-list" class="voice-list"></div>
+      </section>
+      <section class="view" id="view-takes"><div class="panel history-panel"><div class="panel-head"><div class="panel-heading"><svg class="icon"><use href="#i-history"/></svg><h3 data-i18n="Recent jobs">Recent jobs</h3></div><button class="secondary-btn" id="refresh-jobs"><svg class="icon"><use href="#i-refresh"/></svg><span data-i18n="Refresh">Refresh</span></button></div><div id="job-list" class="job-list"></div></div></section>
+      <section class="view" id="view-settings">
+        <section class="about-panel" id="studio-about" aria-labelledby="studio-about-title">
+          <div class="about-heading">
+            <div>
+              <h3 id="studio-about-title" data-i18n="About Drama 3 Studio">关于 Drama 3 Studio</h3>
+              <p><span data-i18n="Created by">作者</span><strong>那颗星星188</strong></p>
+            </div>
+            <small class="about-attribution">Built with Fish Audio</small>
+          </div>
+          <nav class="about-links" aria-label="Author links" data-i18n-aria-label="Author links">
+            <a class="about-link about-link-bilibili" href="https://b23.tv/86MY5Ia" target="_blank" rel="noopener noreferrer">
+              <!-- Original website icon: https://www.bilibili.com/favicon.ico -->
+              <span class="about-brand-mark"><img src="/assets/bilibili-logo.ico" alt="" width="24" height="24"></span>
+              <span class="about-link-copy"><strong data-i18n="Bilibili">B站</strong><small data-i18n="Follow the author">关注作者</small></span>
+              <svg class="icon about-link-arrow" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </a>
+            <a class="about-link about-link-fish" href="https://fish.audio/?fpr=nkxx188" target="_blank" rel="noopener noreferrer">
+              <span class="about-brand-mark"><img src="/assets/drama3-fish-mark.svg" alt="" width="36" height="24"></span>
+              <span class="about-link-copy"><strong>Fish Audio</strong><small data-i18n="Official Fish Audio service">Fish Audio 官方服务</small></span>
+              <svg class="icon about-link-arrow" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </a>
+            <a class="about-link about-link-youtube" href="https://www.youtube.com/@nkxx-188" target="_blank" rel="noopener noreferrer">
+              <span class="about-brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-youtube"/></svg></span>
+              <span class="about-link-copy"><strong>YouTube</strong><small data-i18n="Follow the author">关注作者</small></span>
+              <svg class="icon about-link-arrow" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </a>
+            <a class="about-link about-link-github" href="https://github.com/nkxx188/Drama3-Studio" target="_blank" rel="noopener noreferrer">
+              <span class="about-brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-github"/></svg></span>
+              <span class="about-link-copy"><strong>GitHub</strong><small data-i18n="Source code and releases">项目源码与更新</small></span>
+              <svg class="icon about-link-arrow" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </a>
+          </nav>
+        </section>
+        <div class="panel model-panel">
+          <div class="panel-head">
+            <div class="panel-heading"><svg class="icon"><use href="#i-folder"/></svg><h3 data-i18n="MODEL SETUP">MODEL SETUP</h3></div>
+            <div class="panel-actions">
+              <span id="model-badge" class="badge"><span data-i18n="CHECKING">CHECKING</span></span>
+              <a class="secondary-btn" href="/api/diagnostics/export" download="drama3-support.zip"><svg class="icon"><use href="#i-download"/></svg><span data-i18n="Export diagnostics">Export diagnostics</span></a>
+            </div>
+          </div>
+          <div class="model-location-heading">
+            <span class="field-label" data-i18n="Model locations">Model locations</span>
+            <button id="browse-model-directory" class="secondary-btn" type="button" data-i18n-title="Add model folder" title="Add model folder" data-i18n-aria-label="Add model folder" aria-label="Add model folder">
+              <svg class="icon"><use href="#i-plus"/></svg><span data-i18n="Add model folder">Add model folder</span>
+            </button>
+          </div>
+          <div id="model-root-list" class="model-root-list"></div>
+          <p id="model-location-status" class="field-help" role="status" aria-live="polite"></p>
+          <div class="available-models-row">
+            <label for="installed-model" class="field-label" data-i18n="Available models">Available models</label>
+            <select id="installed-model" class="input"><option value="" data-i18n="Choose a local model…">Choose a local model…</option></select>
+            <button id="select-model" class="primary-btn" data-i18n="Use this model">Use this model</button>
+          </div>
+          <p id="model-selection-status" class="field-help" role="status" aria-live="polite"></p>
+          <section class="model-download" aria-labelledby="model-download-title">
+            <div class="model-download-heading">
+              <div>
+                <h4 id="model-download-title" data-i18n="Download a model">Download a model</h4>
+                <p data-i18n="Choose a verified model package. Downloads can resume after interruption.">Choose a verified model package. Downloads can resume after interruption.</p>
+              </div>
+              <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>
+            </div>
+            <div class="model-download-picker">
+              <label for="model-download-choice" class="field-label" data-i18n="Model version">Model version</label>
+              <select id="model-download-choice" class="input" aria-label="Model version" data-i18n-aria-label="Model version">
+                <option value="" data-i18n="Loading model list…">Loading model list…</option>
+              </select>
+              <div id="model-download-summary" class="model-download-summary">
+                <span id="model-download-format"></span>
+                <span id="model-download-size"></span>
+              </div>
+            </div>
+            <div class="model-download-footer">
+              <div class="model-download-source">
+                <span class="field-label" data-i18n="Download source">Download source</span>
+                <div class="segmented-control" id="model-download-sources" role="group" aria-label="Download source" data-i18n-aria-label="Download source">
+                  <button type="button" class="model-source-option" data-source="auto" data-i18n="Fastest">Fastest</button>
+                  <button type="button" class="model-source-option" data-source="huggingface" data-i18n="Hugging Face">Hugging Face</button>
+                  <button type="button" class="model-source-option" data-source="modelscope" data-i18n="ModelScope">ModelScope</button>
+                </div>
+                <p id="model-download-source-note" class="field-help"></p>
+              </div>
+              <button id="download-model" type="button" class="primary-btn">
+                <svg class="icon"><use href="#i-download"/></svg><span data-i18n="Download model">Download model</span>
+              </button>
+            </div>
+            <div id="model-download-task" class="model-download-task" role="status" aria-live="polite" hidden>
+              <div class="model-download-task-heading">
+                <strong id="model-download-message"></strong>
+                <span id="model-download-percent"></span>
+              </div>
+              <progress id="model-download-progress" max="100" value="0" aria-label="Model download progress" data-i18n-aria-label="Model download progress"></progress>
+              <div class="model-download-task-footer">
+                <span id="model-download-detail"></span>
+                <button id="cancel-model-download" type="button" class="text-btn" data-i18n="Cancel download">Cancel download</button>
+              </div>
+            </div>
+          </section>
+        </div>
+        <div class="settings-grid"><div class="panel"><div id="hardware-card" class="metrics"></div></div></div>
+      </section>
+      </div>
+      </div>
+    </main>
+  </div>
+  <dialog id="voice-library-dialog" class="studio-dialog voice-library-dialog" aria-labelledby="voice-library-title">
+    <div class="studio-dialog-heading"><h2 id="voice-library-title" data-i18n="Add a voice">Add a voice</h2><button id="close-voice-library" type="button" class="icon-btn" title="Close" data-i18n-title="Close" aria-label="Close" data-i18n-aria-label="Close"><svg class="icon"><use href="#i-close"/></svg></button></div>
+    <form id="voice-form">
+      <label class="field-label" for="voice-name" data-i18n="Name">Name</label><input class="input" id="voice-name" required autofocus placeholder="Morgan — calm" data-i18n-placeholder="Morgan — calm">
+      <label class="field-label" for="voice-transcript" data-i18n="Transcript">Transcript</label><textarea class="compact-input" id="voice-transcript" required placeholder="The exact words spoken in the reference audio." data-i18n-placeholder="The exact words spoken in the reference audio."></textarea>
+      <div class="voice-upload-heading"><label class="field-label" for="voice-audio" data-i18n="Audio file / record">Audio file / record</label><div class="speaker-field"><label for="voice-speaker" data-i18n="Speaker ID">Speaker ID</label><input class="input" id="voice-speaker" type="number" min="0" max="15" value="0"></div></div>
+      <label class="upload-zone" id="voice-upload-zone" for="voice-audio"><input id="voice-audio" class="file-input" type="file" accept="audio/*" capture="microphone" required><span class="upload-icon"><svg class="icon"><use href="#i-upload"/></svg></span><b data-i18n="Choose audio or drop it here">Choose audio or drop it here</b><span data-i18n="WAV, MP3, FLAC, OGG or M4A">WAV, MP3, FLAC, OGG or M4A</span></label>
+      <div id="voice-upload-preview" class="upload-preview hidden"><span id="voice-file-name"></span><audio id="voice-file-audio" controls preload="metadata"></audio></div>
+      <div class="compose-footer studio-dialog-footer"><div class="form-note" id="voice-form-note" role="status" aria-live="polite"></div><button class="primary-btn" type="submit" id="save-voice"><span data-i18n="Save voice">Save voice</span><svg class="icon"><use href="#i-check"/></svg></button></div>
+    </form>
+  </dialog>
+  <script src="/assets/i18n.js"></script>
+  <script src="/assets/controls.js"></script>
+  <script src="/assets/player.js"></script>
+  <script src="/assets/script-editor.js"></script>
+  <script src="/assets/app.js"></script>
+  <script src="/assets/references.js"></script>
+  <script src="/assets/audio-editor.js"></script>
+  <script src="/assets/studio.js"></script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+name: Source checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install source-check dependencies
+        run: python -m pip install pytest==9.1.1 packaging==24.1
+      - name: Compile Python sources
+        run: python -m compileall -q src ui/server.py tools
+      - name: Check release assets, UI, packaging and pinned source recovery
+        run: >-
+          python -m pytest tests/test_release_sources.py tests/test_release_archive_parts.py tests/test_ui_assets.py
+          tests/test_windows_package.py tests/test_prepare_sources.py -q
+
+  editor:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/editor-source/package-lock.json
+      - name: Install editor dependencies
+        working-directory: ui/editor-source
+        run: npm ci --include=optional --ignore-scripts
+      - name: Build editor
+        working-directory: ui/editor-source
+        run: npm run build
+      - name: Verify committed bundle matches the source
+        run: git diff --exit-code -- ui/script-editor.js
+      - name: Check JavaScript syntax
+        shell: pwsh
+        run: |
+          foreach ($file in Get-ChildItem -LiteralPath ui -Filter *.js -File) {
+            node --check $file.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

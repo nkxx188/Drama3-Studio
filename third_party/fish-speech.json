@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/fishaudio/fish-speech.git",
+  "commit": "541566932abbaebcb0a40e562a1f846738383f38",
+  "patch": "fish-speech.patch",
+  "sha256": "db72a7c33bf3dbb8aedcb9fb3c83dde3c35b3c8e5c5388098eda3eccdf4d6646",
+  "modifications": [
+    "Use top_k=0 as the local default.",
+    "Treat top_k=0 as no top-k truncation while preserving top-p sampling."
+  ]
+}
