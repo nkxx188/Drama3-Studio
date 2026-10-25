@@ -954,6 +954,22 @@ class DramaEngine:
             torch.cuda.synchronize(self.device)
             torch.cuda.empty_cache()
 
+    def cache_reference_codes(self, audio: Path, transcript: str, codes):
+        """Seed conditioning from an already validated imported codec take."""
+        from .protocols import validate_codes
+
+        with self._lock:
+            validate_drama3_text(transcript, "reference")
+            codes = validate_codes(codes, self.model.config, "imported reference")
+            if not self.options.reference_cache_entries:
+                return
+            with Path(audio).open("rb") as handle:
+                key = (hashlib.file_digest(handle, "sha256").hexdigest(), transcript)
+            self._references[key] = codes.clone()
+            self._references.move_to_end(key)
+            while len(self._references) > self.options.reference_cache_entries:
+                self._references.popitem(last=False)
+
     def prepare_reference(self, audio: Path, transcript: str):
         """Cache immutable reference codes; changed audio contents invalidate them."""
         with self._lock:

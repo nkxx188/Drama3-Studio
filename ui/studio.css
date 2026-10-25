@@ -211,6 +211,25 @@ html, body, button, input, textarea, select, h1, h2, h3, strong { letter-spacing
 .audio-edit-whole-fields .audio-edit-line { position: relative; }
 .audio-edit-whole-fields .audio-edit-line > .text-btn { margin: 0 0 6px 10px; }
 .audio-edit-whole-fields .audio-edit-line .custom-select { display: inline-block; width: min(220px, calc(100% - 70px)); }
+.audio-import-page { min-width: 0; padding-bottom: 86px; }
+.audio-import-change { cursor: pointer; font-weight: 400; }
+.audio-import-page .audio-edit-tabs { margin-bottom: 0; }
+.audio-import-page .upload-zone { min-height: 180px; margin-top: 0; }
+.audio-import-page #audio-import-preview :is(.player-wave, .player-wave-surface) { height: 100px; }
+.audio-import-file-heading, .audio-import-transcript-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.audio-import-file-heading strong { overflow-wrap: anywhere; }
+.audio-import-original { margin-top: 12px; }
+.audio-import-original > summary { color: var(--muted); cursor: pointer; font-size: 14px; }
+.audio-import-transcript-heading { justify-content: flex-end; margin: 6px 0; }
+.audio-import-original textarea { min-height: 100px; resize: vertical; margin-top: 6px; }
+.audio-import-page .audio-edit-source > .field-help { min-height: 0; margin: 8px 0 0; }
+.audio-import-page .audio-edit-source > .field-help:empty { display: none; }
+.audio-import-page .audio-edit-results .output-empty { min-height: 220px; }
+.audio-import-page .audio-edit-whole-fields .field-label:first-child { margin-top: 0; }
+.audio-import-page .audio-edit-local-fields .field-label { margin-top: 10px; }
+.audio-import-page .audio-edit-exact .field-grid { max-width: 340px; }
+.audio-import-page .audio-edit-exact .field-label { margin-top: 0; }
+.audio-import-dock .dock-actions { margin-left: auto; }
 @media (max-width: 1000px) {
   .audio-edit-columns { grid-template-columns: minmax(0, 1fr); }
   .audio-edit-results { border-top: 1px solid var(--line); padding-top: 18px; }
@@ -368,6 +387,7 @@ html, body, button, input, textarea, select, h1, h2, h3, strong { letter-spacing
 .compact-studio .nav { min-height: 44px; padding-block: 8px; }
 .compact-studio .main { padding: 24px var(--studio-gutter) 108px; }
 .compact-studio .main:has(#view-generate.active) { padding-bottom: var(--composer-bottom-space, 82px); }
+.compact-studio .main:has(#view-audio-import.active) { padding-bottom: 92px; }
 .compact-studio .main:has(#view-audio-edit.active) { padding-bottom: 92px; }
 .compact-studio .topbar, .compact-studio .view, .compact-studio .model-switcher { max-width: 1320px; }
 .compact-studio .topbar { margin-bottom: 16px; align-items: center; min-height: 36px; }

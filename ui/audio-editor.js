@@ -68,9 +68,10 @@
   }
   async function open(source, { selection = null, mode = null, returnView: requestedReturnView = null } = {}) {
     if (opening) return;
-    const requestedPage = ['generate', 'scene'].includes(requestedReturnView) ? requestedReturnView
-      : ['generate', 'scene'].includes(hooks.currentView?.()) ? hooks.currentView()
-        : ['generate', 'scene'].includes(active?.returnView) ? active.returnView : 'generate';
+    const returnViews = ['generate', 'scene', 'audio-import'];
+    const requestedPage = returnViews.includes(requestedReturnView) ? requestedReturnView
+      : returnViews.includes(hooks.currentView?.()) ? hooks.currentView()
+        : returnViews.includes(active?.returnView) ? active.returnView : 'generate';
     if (active) {
       if (JSON.stringify(active.source) === JSON.stringify(source) || active.busy) {
         hooks.rememberSource?.(active.source, active.returnView);
@@ -735,7 +736,7 @@
         returnView = sessionStorage.getItem('drama3.ui.audio-edit-return');
       } catch (_) { return false; }
       if (!source?.job_id) return false;
-      if (!['generate', 'scene'].includes(returnView)) returnView = 'generate';
+      if (!['generate', 'scene', 'audio-import'].includes(returnView)) returnView = 'generate';
       await open(source, { returnView });
       return Boolean(active);
     },

@@ -13,7 +13,7 @@ Drama 3 Studio brings model inference, voice references, script editing, and gen
 - **Speech generation and cloning:** upload reference audio, enter or edit its transcript, and generate new lines; you can also choose a saved voice from the voice library.
 - **Multi-speaker dialogue:** assign voices to speakers and write dialogue with speaker markers. Generate an entire conversation jointly, or generate individual turns and combine them.
 - **Voice design:** describe the voice you want in natural language, then use the generated audio as a voice reference.
-- **Audio editing:** revise an entire recording or regenerate a selected section in a dedicated editor.
+- **Audio editing:** upload a recording for automatic transcription, then revise the whole take or a selected passage on the same page. Audio preparation runs when you generate. Existing generation results retain their direct editing workflow.
 - **Script controls:** insert delivery tags, pauses, and speaker markers, and add natural-language performance instructions.
 - **Local management:** save voices, browse generation history, play and download results, and add model folders from other locations.
 - **Model downloads:** choose a model and download source in Settings, with parallel downloads, resume support, and integrity checks.

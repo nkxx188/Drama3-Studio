@@ -9,7 +9,7 @@
     (() => {
       let saved;
       try { saved = sessionStorage.getItem('drama3.ui.view'); } catch (_) { /* optional storage */ }
-      document.documentElement.dataset.view = ['generate', 'scene', 'voices', 'takes', 'settings', 'audio-edit'].includes(saved)
+      document.documentElement.dataset.view = ['generate', 'audio-import', 'scene', 'voices', 'takes', 'settings', 'audio-edit'].includes(saved)
         ? saved : 'generate';
     })();
   </script>
@@ -55,6 +55,7 @@
       <div class="side-label" data-i18n="WORKSPACE">WORKSPACE</div>
       <nav class="workspace-nav" aria-label="Workspace" data-i18n-aria-label="Workspace">
         <button class="nav" data-view="generate"><span><svg class="icon"><use href="#i-text"/></svg></span><span data-i18n="Create">Create</span></button>
+        <button class="nav" data-view="audio-import"><span><svg class="icon"><use href="#i-wave"/></svg></span><span data-i18n="Edit audio">Edit audio</span></button>
         <button class="nav" data-view="scene"><span><svg class="icon"><use href="#i-scene"/></svg></span><span data-i18n="Dialogue">Dialogue</span></button>
         <button class="nav" data-view="voices"><span><svg class="icon"><use href="#i-mic"/></svg></span><span data-i18n="Voices">Voices</span></button>
         <button class="nav" data-view="takes"><span><svg class="icon"><use href="#i-history"/></svg></span><span data-i18n="History">History</span></button>
@@ -157,6 +158,63 @@
         </div>
       </section>
       <section class="view" id="view-audio-edit" aria-label="Edit audio" data-i18n-aria-label="Edit audio"></section>
+      <section class="view" id="view-audio-import" aria-label="Edit an existing audio file" data-i18n-aria-label="Edit an existing audio file">
+        <div class="audio-editor-workspace audio-import-page">
+          <div class="audio-edit-heading">
+            <h2 data-i18n="Source audio">Source audio</h2>
+            <button id="audio-import-choose" class="secondary-btn audio-import-change" type="button"><svg class="icon"><use href="#i-upload"/></svg><span data-i18n="Upload audio">Upload audio</span></button>
+          </div>
+          <input id="audio-import-file" class="sr-only" type="file" tabindex="-1" accept=".wav,.mp3,.flac,.ogg,.m4a,audio/wav,audio/mpeg,audio/flac,audio/ogg,audio/mp4">
+          <div class="audio-edit-columns">
+            <div class="audio-edit-inputs audio-edit-body">
+              <section class="audio-edit-source">
+                <label class="upload-zone" id="audio-import-dropzone" for="audio-import-file">
+                  <span class="upload-icon"><svg class="icon"><use href="#i-upload"/></svg></span>
+                  <b data-i18n="Choose an audio file or drop it here">Choose an audio file or drop it here</b>
+                  <span data-i18n="WAV, MP3, FLAC, OGG or M4A · Up to 120 seconds">WAV, MP3, FLAC, OGG or M4A · Up to 120 seconds</span>
+                </label>
+                <div id="audio-import-preview" class="hidden">
+                  <div class="audio-import-file-heading"><strong id="audio-import-filename"></strong><button id="audio-import-remove" class="text-btn" type="button" data-i18n="Remove audio">Remove audio</button></div>
+                  <audio id="audio-import-player" controls preload="metadata" data-frame-seconds="0.046439909297052155" data-selection-required="true"></audio>
+                </div>
+                <p id="audio-import-asr-status" class="field-help" role="status" aria-live="polite"></p>
+                <details id="audio-import-original" class="audio-import-original">
+                  <summary data-i18n="Original transcript">Original transcript</summary>
+                  <div class="audio-import-transcript-heading"><button id="audio-import-transcribe" class="text-btn" type="button" data-i18n="Transcribe audio">Transcribe audio</button><button id="audio-import-use-selection" class="text-btn" type="button" data-i18n="Use selected words">Use selected words</button></div>
+                  <textarea id="audio-import-transcript" class="compact-input" rows="3" aria-label="Original transcript" data-i18n-aria-label="Original transcript"></textarea>
+                </details>
+              </section>
+              <div class="audio-edit-tabs" role="tablist" aria-label="Modification scope" data-i18n-aria-label="Modification scope">
+                <button class="audio-edit-tab" type="button" role="tab" data-import-mode="local" aria-selected="false" data-i18n="Selected passage">Selected passage</button>
+                <button class="audio-edit-tab" type="button" role="tab" data-import-mode="whole" aria-selected="true" data-i18n="Whole audio">Whole audio</button>
+              </div>
+              <section id="audio-import-local" class="audio-edit-local-fields" hidden>
+                <div class="audio-edit-range-actions"><button id="audio-import-insert" class="text-btn" type="button" data-i18n="Insert at playhead">Insert at playhead</button><details class="audio-edit-exact"><summary data-i18n="Exact selection">Exact selection</summary><div class="field-grid"><label class="field-label"><span data-i18n="Start (seconds)">Start (seconds)</span><input id="audio-import-start" class="input" type="number" min="0" step="any"></label><label class="field-label"><span data-i18n="End (seconds)">End (seconds)</span><input id="audio-import-end" class="input" type="number" min="0" step="any"></label></div></details></div>
+                <label class="field-label" for="audio-import-quote" data-i18n="Original words in selection">Original words in selection</label><textarea id="audio-import-quote" class="compact-input" rows="2"></textarea>
+                <div id="audio-import-matches" class="audio-edit-matches"></div>
+                <div class="audio-edit-replacement"><label class="field-label" for="audio-import-replacement" data-i18n="Replacement words">Replacement words</label><textarea id="audio-import-replacement" class="compact-input" rows="3"></textarea></div>
+                <p id="audio-import-local-note" class="field-help" role="status"></p>
+              </section>
+              <section id="audio-import-whole" class="audio-edit-whole-fields">
+                <div class="audio-edit-line"><label class="field-label" for="audio-import-text" data-i18n="Text to speak">Text to speak</label><textarea id="audio-import-text" class="compact-input" rows="4"></textarea></div>
+                <label class="field-label" for="audio-import-direction" data-i18n="Direction">Direction</label><input id="audio-import-direction" class="input">
+              </section>
+              <p id="audio-import-error" class="studio-error" role="alert" hidden></p>
+            </div>
+            <section id="audio-import-results" class="audio-edit-results" data-state="idle">
+              <div class="audio-edit-results-heading"><h3 data-i18n="Edited result">Edited result</h3><div class="audio-edit-results-status"><span id="audio-import-result-badge" class="badge"></span><button id="audio-import-cancel" class="text-btn" type="button" data-i18n="Cancel" hidden>Cancel</button></div></div>
+              <div class="progress-wrap"><div class="progress-track"><div id="audio-import-progress-bar"></div></div><div class="progress-row" role="status" aria-live="polite"><span id="audio-import-stage"></span><span id="audio-import-progress-count" class="progress-count"></span></div></div>
+              <p id="audio-import-result-error" class="studio-error" role="alert" hidden></p>
+              <div id="audio-import-result-box" class="result-box hidden"></div>
+              <div id="audio-import-output-empty" class="empty-state output-empty"><div class="empty-illustration"><svg class="icon"><use href="#i-headphones"/></svg></div><b data-i18n="No audio yet">No audio yet</b></div>
+            </section>
+          </div>
+          <footer class="compose-footer action-dock audio-import-dock" id="audio-import-dock"><div class="action-dock-inner">
+            <details class="audio-edit-parameters dock-settings" id="audio-import-settings"><summary><svg class="icon"><use href="#i-settings"/></svg><span data-i18n="Generation settings">Generation settings</span></summary><div class="generation-settings-popover"><div class="settings-popover-heading"><strong data-i18n="Generation settings">Generation settings</strong><button id="audio-import-close-settings" class="icon-btn" type="button" aria-label="Close" data-i18n-aria-label="Close"><svg class="icon"><use href="#i-close"/></svg></button></div><div id="audio-import-parameters" class="field-grid"></div><label class="check-field"><input id="audio-import-random" type="checkbox" checked><span data-i18n="Random seed">Random seed</span></label></div></details>
+            <div class="dock-actions"><span class="dock-shortcut">Ctrl + Enter</span><button id="audio-import-submit" class="primary-btn" type="button" disabled><span data-i18n="Generate edited version">Generate edited version</span><svg class="icon"><use href="#i-arrow"/></svg></button></div>
+          </div></footer>
+        </div>
+      </section>
       <section class="view" id="view-scene">
         <div class="workspace-grid scene-grid">
           <section class="dialogue-composer" aria-label="Dialogue" data-i18n-aria-label="Dialogue">
@@ -306,5 +364,6 @@
   <script src="/assets/references.js"></script>
   <script src="/assets/audio-editor.js"></script>
   <script src="/assets/studio.js"></script>
+  <script src="/assets/audio-import.js"></script>
 </body>
 </html>

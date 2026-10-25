@@ -21,6 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--recovery-checks", action="store_true")
     parser.add_argument("--audio-editor-checks", action="store_true")
+    parser.add_argument("--audio-import-checks", action="store_true")
     parser.add_argument("--simplified-checks", action="store_true")
     parser.add_argument("--tag-checks", action="store_true")
     parser.add_argument("--library-layout-checks", action="store_true")
@@ -54,9 +55,27 @@ def main():
 
     class Synthetic:
         is_gguf = True
+        build = {"protocol": 5}
         model_path = state.checkpoint
         options = SimpleNamespace(codec_max_frames=2048)
         _lock = RLock()
+
+        def load(self, **_kwargs):
+            pass
+
+        def prewarm_references(self, references, **_kwargs):
+            self.references = {}
+            for reference in references:
+                info = sf.info(reference.audio)
+                count = (info.frames * rate + info.samplerate * 2048 - 1) // (info.samplerate * 2048)
+                self.references[str(Path(reference.audio))] = {
+                    "text": reference.transcript(),
+                    "vq_codes": torch.ones(10, count, dtype=torch.int64).tolist(),
+                }
+            return {"status": "ready", "references": len(references)}
+
+        def _cached_reference_codes(self, path):
+            return self.references.get(str(path))
 
         def generate(self, text, output, **kwargs):
             codes = torch.ones(10, frames, dtype=torch.int64)
@@ -147,6 +166,7 @@ def main():
     try:
         result = subprocess.run(
             [shutil.which("node") or "node", str(ROOT / "tools" / (
+                "validate_audio_import_ui.cjs" if arguments.audio_import_checks else
                 "validate_reference_prewarm_ui.cjs" if arguments.reference_prewarm_checks else
                 "validate_result_controls_ui.cjs" if arguments.result_controls_checks else
                 "validate_studio_polish_ui.cjs" if arguments.polish_checks else

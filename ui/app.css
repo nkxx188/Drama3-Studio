@@ -52,6 +52,7 @@ a { color: inherit; }
 .nav .icon { width: 20px; height: 20px; }
 .nav:hover { color: var(--text); background: var(--hover); }
 html[data-view="generate"] .nav[data-view="generate"],
+html[data-view="audio-import"] .nav[data-view="audio-import"],
 html[data-view="audio-edit"] .nav.active,
 html[data-view="scene"] .nav[data-view="scene"],
 html[data-view="voices"] .nav[data-view="voices"],
@@ -93,6 +94,7 @@ html[data-view="settings"] .nav[data-view="settings"] { border-color: #efcec0; b
 .model-status.error { color: var(--danger); }
 .view { display: none; }
 html[data-view="generate"] #view-generate,
+html[data-view="audio-import"] #view-audio-import,
 html[data-view="audio-edit"] #view-audio-edit,
 html[data-view="scene"] #view-scene,
 html[data-view="voices"] #view-voices,

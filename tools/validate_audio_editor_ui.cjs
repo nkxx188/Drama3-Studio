@@ -25,7 +25,7 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
       const file = path.join(folder, name + '.png'); await page.screenshot({ path: file });
       report.screenshots.push(file);
     };
-    const replacement = () => page.locator('.audio-edit-replacement .cm-content');
+    const replacement = () => page.locator('#audio-edit-workspace .audio-edit-replacement .cm-content');
     const close = async () => {
       if (!await page.locator('#audio-edit-workspace').isVisible()) {
         await page.evaluate(() => view('audio-edit'));
@@ -89,7 +89,7 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
     const select = async (start, end) => {
       // A new range gesture must start outside an existing draggable handle.
       await page.locator('#audio-edit-source').evaluate(audio => StudioAudio.clearSelection(audio));
-      const wave = page.locator('.audio-edit-source .player-wave-surface'); await wave.scrollIntoViewIfNeeded();
+      const wave = page.locator('#audio-edit-workspace .audio-edit-source .player-wave-surface'); await wave.scrollIntoViewIfNeeded();
       const bounds = await wave.boundingBox();
       await page.mouse.move(bounds.x + bounds.width * start, bounds.y + bounds.height / 2);
       await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width * end, bounds.y + bounds.height / 2, { steps: 10 });
@@ -149,8 +149,8 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
       && !(await page.locator('#audio-edit-diff').textContent()).includes('我们一起出发')
       && await page.locator('#audio-edit-submit').isEnabled());
     const selected = await page.locator('#audio-edit-source').evaluate(audio => StudioAudio.selection(audio));
-    await page.locator('.audio-edit-exact > summary').click();
-    await page.locator('.audio-edit-parameters > summary').click();
+    await page.locator('#audio-edit-workspace .audio-edit-exact > summary').click();
+    await page.locator('#audio-edit-workspace .audio-edit-parameters > summary').click();
     check('every_numeric_editor_field_displays_at_most_two_decimals',
       await page.locator('#audio-edit-workspace input[type=number]').evaluateAll(nodes => nodes.every(node =>
         !node.value || !node.value.includes('.') || node.value.split('.')[1].length <= 2)));
@@ -162,8 +162,8 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
       await page.locator('#audio-edit-quote').evaluate(node =>
         getComputedStyle(node).borderTopColor === 'rgb(185, 194, 206)')
       && await page.locator('#audio-edit-workspace').evaluate(node => getComputedStyle(node).borderTopColor === 'rgb(217, 222, 229)'));
-    await page.locator('.audio-edit-exact > summary').click();
-    await page.locator('.audio-edit-parameters > summary').click();
+    await page.locator('#audio-edit-workspace .audio-edit-exact > summary').click();
+    await page.locator('#audio-edit-workspace .audio-edit-parameters > summary').click();
     await shot('audio-editor-inline-local');
     await close(); await page.reload({ waitUntil: 'networkidle' }); await ready(); await open(first.id);
     check('snippet_draft_and_exact_range_restore_without_overwriting_creation',
@@ -188,7 +188,7 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
       await page.locator('#result-box').getAttribute('data-job-id') === first.id
       && (await api('/api/studio')).drafts.audio_editor.value.entries[`${first.id}:all`].result_job_id === local.id);
     await page.waitForFunction(() =>
-      document.querySelectorAll('.audio-edit-source .player-wave rect').length === 80
+      document.querySelectorAll('#audio-edit-workspace .audio-edit-source .player-wave rect').length === 80
       && document.querySelectorAll('#audio-edit-result-box .main-result .player-wave rect').length === 80);
     for (const width of [1920, 1440, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1080 });
@@ -248,12 +248,14 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
     await open(tagged.id); await select(.2, .5);
     await page.locator('#audio-edit-quote').fill('下午</whisper>一起'); await replacement().fill('晚上一起');
     check('local_range_cannot_break_surrounding_scope_tags', await page.locator('#audio-edit-submit').isDisabled());
-    await page.locator('#audio-edit-quote').fill('下午'); await replacement().fill('晚上');
+    await page.locator('#audio-edit-quote').fill('下午');
+    await replacement().press('Control+A'); await replacement().press('Backspace');
+    await replacement().pressSequentially('晚上');
     const tagEdit = await finish();
     check('local_words_preserve_surrounding_tags_and_text', tagEdit.recipe.text === '今天<whisper>晚上</whisper>一起出发。');
     await open(first.id);
-    await page.locator('.audio-edit-source .player-seek').focus();
-    await page.locator('.audio-edit-source .player-seek').press('End');
+    await page.locator('#audio-edit-workspace .audio-edit-source .player-seek').focus();
+    await page.locator('#audio-edit-workspace .audio-edit-source .player-seek').press('End');
     await page.locator('#audio-edit-insert').click();
     check('insertion_requires_an_explicit_text_position', await page.locator('#audio-edit-submit').isDisabled());
     await page.locator('#audio-edit-original-0').focus(); await page.locator('#audio-edit-original-0').press('Control+End');

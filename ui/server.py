@@ -65,7 +65,7 @@ from drama_low_vram.workflows import DramaWorkflows, load_take  # noqa: E402
 from drama_low_vram.gguf_resources import is_gguf, resolve_gguf, inspect_gguf  # noqa: E402
 from drama_low_vram.gguf_runtime import GGUFEngine, GenerationCancelled, MAX_AUTOMATIC_CONTEXT  # noqa: E402
 from drama_low_vram.gguf_workflows import GGUFWorkflows  # noqa: E402
-from drama_low_vram.gguf_takes import load_conditioning_take  # noqa: E402
+from drama_low_vram.gguf_takes import load_conditioning_take, save_native_take  # noqa: E402
 from drama_low_vram.runtime_files import load_native_runtime  # noqa: E402
 from drama_low_vram.diagnostics import select_python_device  # noqa: E402
 from drama_low_vram.reference_asr import ReferenceTranscriber  # noqa: E402
@@ -259,7 +259,8 @@ class AppState:
             return {
                 "ordinary_tts": True, "voice_cloning": True, "multi_reference": True,
                 "cross_language": True, "director_revision": advanced, "point_and_scoped_controls": True,
-                "infill": advanced, "streaming_text": advanced, "streaming_audio": advanced,
+                "infill": advanced, "audio_import": protocol >= 5,
+                "streaming_text": advanced, "streaming_audio": advanced,
                 "scene_scheduler": advanced, "native_scene_separator": False,
                 "joint_dialogue": protocol >= 4, "voice_design": protocol >= 4,
                 "direction": True, "language_hint": True, "duration_hint": protocol >= 4,
@@ -283,6 +284,7 @@ class AppState:
             "point_and_scoped_controls": True,
             "direction": True, "language_hint": True, "duration_hint": True,
             "infill": True,
+            "audio_import": True,
             "streaming_text": True,
             "streaming_audio": True,
             "scene_scheduler": True,
@@ -1533,7 +1535,8 @@ class AppState:
             for job_id, clock in self._job_clocks.items():
                 if job_id in self._jobs:
                     self._jobs[job_id]["timing"] = clock.snapshot()
-            values = list(self._jobs.values())
+            values = [job for job in self._jobs.values()
+                      if job.get("mode") != "audio_import" or job.get("status") in ("queued", "running")]
         values.sort(key=lambda item: item["created_at"], reverse=True)
         return [json.loads(json.dumps(value)) for value in values[:100]]
 
@@ -1686,6 +1689,206 @@ class AppState:
         (folder / "reference.json").write_text(
             json.dumps(metadata, ensure_ascii=False) + "\n", encoding="utf-8")
         return {"id": upload_id, "filename": metadata["filename"]}
+
+    def start_uploaded_audio_edit(self, payload):
+        """Create one edit job; uploaded audio is encoded only when the job runs."""
+        import soundfile as sf
+        from drama_low_vram.gguf_runtime import reference_wav
+
+        if not isinstance(payload, dict):
+            raise ValueError("Audio edit request must be an object")
+        upload = self.reference_upload(payload.get("upload_id"))
+        reference = VoiceReference(upload["audio_path"], payload.get("original_transcript"), 0)
+        reference.transcript()
+        text = VoiceReference("", payload.get("text"), 0).transcript()
+        operation = payload.get("operation")
+        if operation not in ("revision", "reword", "infill"):
+            raise ValueError("Unknown uploaded audio edit operation")
+        if operation == "revision" and text != reference.transcript():
+            raise ValueError("Revision must keep the original transcript")
+        direction = payload.get("direction", "")
+        validate_content(direction, "direction", empty=True)
+        if operation == "infill" and direction:
+            raise ValueError("Use inline controls for selected-passage editing")
+        self._validate_sampling(payload)
+        audio = reference_wav(reference.audio, ROOT)
+        info = sf.info(audio)
+        if (not .5 <= info.duration <= 120 or not 1 <= info.channels <= 8
+                or not 8000 <= info.samplerate <= 384000):
+            raise ValueError("Audio editing supports recordings from 0.5 to 120 seconds")
+        frames = math.ceil(info.frames * 44100 / (info.samplerate * 2048))
+        if operation == "infill":
+            start, end = payload.get("start_frame"), payload.get("end_frame")
+            if (any(isinstance(value, bool) or not isinstance(value, int) for value in (start, end))
+                    or not 0 <= start <= end <= frames):
+                raise ValueError("Infill boundaries must lie within the source codec frames")
+        with self._engine_lock:
+            if self._releasing_resources:
+                raise RuntimeError("Model resources are being released. Please wait.")
+            if not self.capabilities().get("audio_import"):
+                raise ValueError("The selected model or runtime does not support audio editing")
+            if payload.get("model") and Path(payload["model"]).resolve() != self.checkpoint.resolve():
+                raise ValueError("The selected model changed. Please try again.")
+            job_id = uuid.uuid4().hex
+            folder = self.jobs_root / job_id
+            folder.mkdir(parents=True)
+            source_audio = folder / "source.wav"
+            native = is_gguf(self.checkpoint)
+            studio = clone(payload.get("studio") or {})
+            if not isinstance(studio, dict):
+                raise ValueError("Studio context must be an object")
+            for key in ("work_id", "segment_id"):
+                studio.setdefault(key, uuid.uuid4().hex)
+                record_id(studio[key])
+            studio.update(layout="single", result_scope="audio_editor")
+            studio.setdefault("edit_source", "upload:" + upload["id"])
+            recipe = {
+                "schema": 1, "mode": {"revision": "revision", "reword": "tts", "infill": "infill"}[operation],
+                "text": text, "direction": direction, "operation": operation,
+                "model": str(self.checkpoint), "studio": studio,
+                "reference_snapshot": ([] if operation == "infill" else [
+                    asdict(VoiceReference(str(source_audio), reference.text, 0))]),
+                "codec": {"family": "drama3-dac", "sample_rate": 44100,
+                          "samples_per_frame": 2048, "codebooks": 10, "vocabulary": 4096},
+                "runtime": {"backend": "gguf" if native else "python"},
+                "audio_edit": {"upload_id": upload["id"], "original_transcript": reference.text},
+                "seed": payload.get("seed", 123), "max_new_tokens": payload.get("max_new_tokens", 768),
+                "temperature": payload.get("temperature", 1.0 if native else .7),
+                "top_k": payload.get("top_k", 0), "top_p": payload.get("top_p", .9 if native else .7),
+                "duration_frames": payload.get("duration_frames"),
+            }
+            if operation == "infill":
+                recipe.update(start_frame=start, end_frame=end)
+                recipe.pop("direction")
+            if native:
+                runtime = load_native_runtime(ROOT)
+                recipe["runtime"].update(protocol=runtime.get("protocol"),
+                                         executable_sha256=runtime.get("sha256"))
+            job = {
+                "id": job_id, "mode": recipe["mode"], "status": "queued",
+                "created_at": time.time(), "updated_at": time.time(), "events": [],
+                "output": None, "take_file": None, "error": None, "recipe": recipe, "studio": studio,
+                "payload_summary": {"mode": recipe["mode"], "text_length": len(text),
+                                    "reference_count": len(recipe["reference_snapshot"])},
+            }
+            with self._jobs_lock:
+                self._jobs[job_id] = job
+                self._persist_job_locked(job_id)
+            self.studio.register(job)
+            self._executor.submit(self._run_uploaded_audio_edit, job_id, reference, audio, source_audio)
+        return {"id": job_id}
+
+    def _prepare_uploaded_audio(self, job_id, reference, encoded_audio, source_audio):
+        import soundfile as sf
+        import torch
+        from drama_low_vram.gguf_takes import CODEC_CONFIG
+        from drama_low_vram.protocols import validate_codes
+
+        if self.cancelled(job_id):
+            raise GenerationCancelled("Audio preparation cancelled")
+        clock = self._job_clocks[job_id]
+        clock.begin("model_load")
+        try:
+            engine = self._get_engine(job_id)
+            if getattr(engine, "is_gguf", False):
+                engine.load(cancelled=lambda: self.cancelled(job_id))
+            else:
+                engine.load()
+        finally:
+            clock.end("model_load")
+        if self.cancelled(job_id):
+            raise GenerationCancelled("Audio preparation cancelled")
+        self._event(job_id, {"stage": "prepare", "message": "Encoding uploaded audio"})
+        shutil.copyfile(encoded_audio, source_audio)
+        digest = hashlib.sha256(b"drama3-uploaded-edit-codec-v1")
+        paths = {self.checkpoint.resolve(), Path(getattr(engine, "model_path", self.checkpoint)).resolve()}
+        if self.checkpoint.is_dir():
+            paths.update(self.checkpoint / name for name in ("codec.pth", "config.json"))
+        for path in sorted(paths):
+            digest.update(str(path).encode("utf-8"))
+            if path.exists():
+                stat = path.stat()
+                digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode("ascii"))
+        with source_audio.open("rb") as handle:
+            digest.update(hashlib.file_digest(handle, "sha256").digest())
+        cache_audio = self.data_root / "audio-edit-cache" / (digest.hexdigest() + ".wav")
+        cache = cache_audio.with_suffix(".take.json")
+        codes = None
+        if cache.is_file():
+            try:
+                codes = load_conditioning_take(cache)[0].codes
+            except (OSError, ValueError, RuntimeError):
+                pass
+        hit = codes is not None
+        if not hit:
+            prepared = VoiceReference(str(source_audio), reference.text, 0)
+            if getattr(engine, "is_gguf", False):
+                engine.prewarm_references([prepared], cancelled=lambda: self.cancelled(job_id))
+                artifact = engine._cached_reference_codes(source_audio)
+                if not artifact:
+                    raise RuntimeError("The audio codec did not return source codes")
+                codes = torch.tensor(artifact["vq_codes"], dtype=torch.int64)
+            else:
+                codes, _ = engine.prepare_reference(source_audio, reference.transcript())
+            codes = validate_codes(codes, CODEC_CONFIG, "imported audio")
+            if self.cancelled(job_id):
+                raise GenerationCancelled("Audio preparation cancelled")
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            save_native_take(cache_audio, PreviousTake(reference.transcript(), codes))
+        if self.cancelled(job_id):
+            raise GenerationCancelled("Audio preparation cancelled")
+        if getattr(engine, "is_gguf", False):
+            remember = getattr(engine, "_remember_reference_codes", None)
+            if callable(remember):
+                remember(source_audio, {"text": reference.transcript(), "vq_codes": codes.tolist()})
+        elif callable(getattr(engine, "cache_reference_codes", None)):
+            engine.cache_reference_codes(source_audio, reference.transcript(), codes)
+        take_file = save_native_take(
+            source_audio, PreviousTake(reference.transcript(), codes),
+            metadata={"mode": "audio_import", "spoken_text": reference.text,
+                      "model": str(self.checkpoint)},
+        )
+        with self._jobs_lock:
+            self._jobs[job_id]["source_preparation"] = {
+                "codec_cache_hit": hit, "take_file": str(take_file),
+            }
+        return take_file, sf.info(source_audio)
+
+    def _run_uploaded_audio_edit(self, job_id, reference, audio, source_audio):
+        with self._jobs_lock:
+            job = self._jobs[job_id]
+            job["status"] = "running"
+            self._job_clocks[job_id] = JobClock(queued_seconds=time.time() - job["created_at"])
+            self._persist_job_locked(job_id)
+        try:
+            take_file, _info = self._prepare_uploaded_audio(job_id, reference, audio, source_audio)
+            with self._jobs_lock:
+                recipe = self._jobs[job_id]["recipe"]
+                if recipe["mode"] == "infill":
+                    recipe["source_take"] = str(take_file)
+                    count = load_conditioning_take(take_file)[0].codes.shape[1]
+                    recipe["start_frame"] = min(count, recipe["start_frame"])
+                    recipe["end_frame"] = min(count, recipe["end_frame"])
+                elif recipe["mode"] == "revision":
+                    recipe["previous_take"] = str(take_file)
+                self._persist_job_locked(job_id)
+                request = clone(recipe)
+            self._run_job(job_id, request)
+        except GenerationCancelled:
+            self._record_result(job_id, {"status": "cancelled", "output": None, "take_file": None})
+        except Exception as exc:
+            with self._jobs_lock:
+                self._jobs[job_id].update(status="error", error=f"{type(exc).__name__}: {exc}")
+                self._persist_job_locked(job_id)
+            self._event(job_id, {"stage": "error", "message": str(exc)})
+            detail("Uploaded audio edit %s failed", job_id, exc_info=True)
+        finally:
+            with self._jobs_lock:
+                clock = self._job_clocks.pop(job_id, None)
+                if clock:
+                    clock.finish()
+                    self._jobs[job_id]["timing"] = clock.snapshot()
+                    self._persist_job_locked(job_id)
 
     def crop_reference_upload(self, payload):
         """Create a separate reference; never modify the uploaded source."""
@@ -2080,7 +2283,7 @@ class AppState:
             return
         with self._jobs_lock:
             self._jobs[job_id]["status"] = "running"
-            self._job_clocks[job_id] = clock = JobClock(
+            self._job_clocks[job_id] = clock = self._job_clocks.get(job_id) or JobClock(
                 queued_seconds=time.time() - self._jobs[job_id]["created_at"])
             self._jobs[job_id]["timing"] = clock.snapshot()
             self._persist_job_locked(job_id)
@@ -2605,6 +2808,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("An audio file is required")
                 return self._json(201, STATE.add_reference_upload(
                     audio["filename"], audio["data"]))
+            if path == "/api/audio-edit/jobs":
+                return self._json(202, STATE.start_uploaded_audio_edit(self._payload()))
             if path == "/api/reference-audio/crop":
                 return self._json(201, STATE.crop_reference_upload(self._payload()))
             if path == "/api/reference-audio/from-version":

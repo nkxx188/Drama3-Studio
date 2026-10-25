@@ -2063,7 +2063,7 @@
       updateStrategy(); syncControls(); renderOperation(); renderSceneOperation();
     });
     document.addEventListener('drama:viewchange', event => {
-      if (event.detail === 'audio-edit') return;
+      if (['audio-edit', 'audio-import'].includes(event.detail)) return;
       const monitor = document.querySelector('.monitor-panel');
       const container = event.detail === 'scene'
         ? document.querySelector('.scene-grid') : document.querySelector('.generation-grid');

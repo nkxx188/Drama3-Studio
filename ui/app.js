@@ -142,27 +142,32 @@ const api = async (path, options = {}) => {
 };
 
 const viewTitles = {
-  generate: 'Generate speech', scene: 'Dialogue', voices: 'Voice library',
-  takes: 'History', settings: 'Engine settings', 'audio-edit': 'Edit audio',
+  generate: 'Generate speech', 'audio-import': 'Edit existing audio', scene: 'Dialogue',
+  voices: 'Voice library', takes: 'History', settings: 'Engine settings', 'audio-edit': 'Edit audio',
 };
 const viewStorageKey = 'drama3.ui.view';
 const audioEditSourceKey = 'drama3.ui.audio-edit-source';
 const audioEditReturnKey = 'drama3.ui.audio-edit-return';
 function restoreView() {
-  view(document.documentElement.dataset.view || 'generate');
+  const name = document.documentElement.dataset.view || 'generate';
+  let returnView;
+  if (name === 'audio-edit') {
+    try { returnView = sessionStorage.getItem(audioEditReturnKey); } catch (_) { /* optional storage */ }
+  }
+  view(name, { returnView });
 }
 function view(name, options = {}) {
   if (!Object.hasOwn(viewTitles, name)) name = 'generate';
   const changed = state.view !== name;
   if (name === 'audio-edit') {
-    state.editorReturnView = ['generate', 'scene'].includes(options.returnView)
+    state.editorReturnView = ['generate', 'scene', 'audio-import'].includes(options.returnView)
       ? options.returnView
-      : ['generate', 'scene'].includes(state.view) ? state.view
-        : ['generate', 'scene'].includes(state.editorReturnView) ? state.editorReturnView
+      : ['generate', 'scene', 'audio-import'].includes(state.view) ? state.view
+        : ['generate', 'scene', 'audio-import'].includes(state.editorReturnView) ? state.editorReturnView
           : (() => {
             try {
               const saved = sessionStorage.getItem(audioEditReturnKey);
-              return ['generate', 'scene'].includes(saved) ? saved : 'generate';
+              return ['generate', 'scene', 'audio-import'].includes(saved) ? saved : 'generate';
             } catch (_) { return 'generate'; }
           })();
     try {
@@ -173,7 +178,7 @@ function view(name, options = {}) {
     if (state.view === 'audio-edit') {
       try { sessionStorage.removeItem(audioEditSourceKey); } catch (_) { /* optional storage */ }
     }
-    if (['generate', 'scene'].includes(name)) state.editorReturnView = name;
+    if (['generate', 'scene', 'audio-import'].includes(name)) state.editorReturnView = name;
   }
   state.view = name;
   document.documentElement.dataset.view = name;
@@ -189,7 +194,7 @@ function view(name, options = {}) {
     else node.removeAttribute('aria-current');
   });
   $('view-title').textContent = t(viewTitles[name]);
-  document.querySelector('.model-switcher').hidden = !['generate', 'scene', 'audio-edit'].includes(name);
+  document.querySelector('.model-switcher').hidden = !['generate', 'scene', 'audio-import', 'audio-edit'].includes(name);
   document.dispatchEvent(new CustomEvent('drama:viewchange', { detail: name }));
   if (changed) window.scrollTo({ top: 0, behavior: 'instant' });
 }
@@ -420,7 +425,7 @@ async function loadCapabilities() {
       button.hidden = !capabilities[button.dataset.mode === 'revision' ? 'director_revision' : 'infill'];
     });
     if (state.activeJob) renderResults(state.activeJob);
-    document.dispatchEvent(new CustomEvent('drama:capabilities'));
+    document.dispatchEvent(new CustomEvent('drama:capabilities', { detail: capabilities }));
     if (state.capabilityError) { state.capabilityError = null; setEngine(state.hardware); }
   } catch (error) { state.capabilityError = error.message; setEngine(state.hardware); }
 }
@@ -905,7 +910,7 @@ async function cancelReferencePrewarm() {
 window.ReferencePrewarm = Object.freeze({ schedule: scheduleReferencePrewarm, cancel: cancelReferencePrewarm });
 document.addEventListener('drama:languagechange', () => renderReferencePrewarm(state.referencePrewarmTask));
 document.addEventListener('drama:viewchange', event => {
-  if (['scene', 'audio-edit'].includes(event.detail)) cancelReferencePrewarm();
+  if (['scene', 'audio-edit', 'audio-import'].includes(event.detail)) cancelReferencePrewarm();
   else if (event.detail === 'generate') scheduleReferencePrewarm();
 });
 function clearCloneAudio(resetInput = true) {
@@ -1717,6 +1722,7 @@ async function loadJobs() {
     if (state.jobs.length && list.querySelector('.empty-state')) list.replaceChildren();
     let position = list.firstChild;
     const jobs = [...new Map([...(window.StudioFlow?.historyJobs() || []), ...state.jobs].map(job => [job.id, job])).values()]
+      .filter(job => job.mode !== 'audio_import')
       .sort((a, b) => b.created_at - a.created_at);
     for (const job of jobs) {
       let row = existing.get(job.id);
