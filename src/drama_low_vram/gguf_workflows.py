@@ -18,6 +18,7 @@ from .gguf_runtime import GenerationCancelled
 from .gguf_takes import CODEC_CONFIG, load_conditioning_take, load_native_take, save_native_take
 from .protocols import PreviousTake, design_character, directed_text, validate_content
 from .text_chunks import split_text
+from .workflows import _history_variants, _is_prompt_overflow
 from .sampling import DEFAULT_TOP_K
 
 
@@ -84,11 +85,6 @@ class GGUFWorkflows:
             for index, chunk in enumerate(chunks):
                 if cancelled and cancelled():
                     raise GenerationCancelled("GGUF generation cancelled")
-                active_history = list(previous_takes)
-                if first is not None:
-                    active_history.append(first)
-                    if last is not first:
-                        active_history.append(last)
                 if progress:
                     progress({"stage": "generate", "chunk": index + 1, "chunks": len(chunks)})
                 target = output if len(chunks) == 1 else output.with_name(
@@ -110,15 +106,28 @@ class GGUFWorkflows:
                                   "limit": max_new_tokens})
 
                 extra = {"design": design} if design else {}
-                result = self.engine.generate(
-                    f"[{direction}] {chunk}" if design and direction else chunk,
-                    target, references=references, previous_takes=active_history,
-                    direction="" if design else direction, language=language, duration_frames=duration_frames,
-                    task_mode=mode if mode in ("infill", "stream", "design") else "joint" if single_chunk else "",
-                    lookahead=lookahead, infill=infill, seed=(seed + index) % 2**32,
-                    max_frames=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p,
-                    chunk_size=2000, cancelled=cancelled, streaming_audio=streaming_audio,
-                    chunk_frames=chunk_frames, segment_ready=deliver if streaming_audio else None, **extra)
+                result = None
+                history_error = None
+                for active_history in _history_variants(
+                    previous_takes, first, last):
+                    try:
+                        result = self.engine.generate(
+                            f"[{direction}] {chunk}" if design and direction else chunk,
+                            target, references=references, previous_takes=active_history,
+                            direction="" if design else direction, language=language, duration_frames=duration_frames,
+                            task_mode=mode if mode in ("infill", "stream", "design") else "joint" if single_chunk else "",
+                            lookahead=lookahead, infill=infill, seed=(seed + index) % 2**32,
+                            max_frames=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p,
+                            chunk_size=2000, cancelled=cancelled, streaming_audio=streaming_audio,
+                            chunk_frames=chunk_frames, segment_ready=deliver if streaming_audio else None, **extra)
+                    except Exception as error:
+                        if not _is_prompt_overflow(error):
+                            raise
+                        history_error = error
+                        continue
+                    break
+                if result is None:
+                    raise history_error or RuntimeError("No usable generation history")
                 last_result = result
                 status = result["status"]
                 if not result.get("take_file"):

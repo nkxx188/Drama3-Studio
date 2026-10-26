@@ -817,6 +817,11 @@ class AppState:
                 if (isinstance(value, bool) or not isinstance(value, (int, float))
                         or not math.isfinite(value) or not low < value <= high):
                     raise ValueError(f"Invalid {key}")
+        if "max_chunk_chars" in payload:
+            value = payload["max_chunk_chars"]
+            if (isinstance(value, bool) or not isinstance(value, int)
+                    or not 80 <= value <= 320):
+                raise ValueError("max_chunk_chars must be an integer from 80 to 320")
         duration = payload.get("duration_frames")
         if duration not in (None, ""):
             if isinstance(duration, bool) or not isinstance(duration, int) or not 1 <= duration <= 2048:
@@ -1516,7 +1521,10 @@ class AppState:
                 self._joint_script_lines(original)
         else:
             raise ValueError("Unknown creative operation")
-        for key in ("temperature", "top_k", "top_p", "max_new_tokens", "duration_frames"):
+        for key in (
+            "temperature", "top_k", "top_p", "max_new_tokens",
+            "max_chunk_chars", "duration_frames",
+        ):
             if key in payload:
                 original[key] = payload[key]
         if original.get("duration_frames") and operation != "infill":
@@ -1753,6 +1761,7 @@ class AppState:
                 "runtime": {"backend": "gguf" if native else "python"},
                 "audio_edit": {"upload_id": upload["id"], "original_transcript": reference.text},
                 "seed": payload.get("seed", 123), "max_new_tokens": payload.get("max_new_tokens", 768),
+                "max_chunk_chars": payload.get("max_chunk_chars", 160),
                 "temperature": payload.get("temperature", 1.0 if native else .7),
                 "top_k": payload.get("top_k", 0), "top_p": payload.get("top_p", .9 if native else .7),
                 "duration_frames": payload.get("duration_frames"),

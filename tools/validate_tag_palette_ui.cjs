@@ -98,6 +98,43 @@ const expected = [
     await host().locator('[data-label="Undo"]').click();
     check('tag_change_is_one_undo_step', await page.inputValue('#text') === '你好，这是一次本地语音测试。');
 
+    await editor().fill('重庆今天出发。');
+    await nativeSelect(0, 2, true);
+    const pronunciationAction = host().locator('[data-action="phoneme"]');
+    check('chinese_ui_exposes_pronunciation_for_selected_hanzi', await pronunciationAction.isVisible());
+    await pronunciationAction.click();
+    const pronunciationForm = host().locator('.tag-pronunciation-form');
+    const pinyin = pronunciationForm.locator('input');
+    await pinyin.fill('chong2');
+    await pronunciationForm.locator('button[type="submit"]').click();
+    check('pinyin_count_must_match_selected_hanzi',
+      await pronunciationForm.locator('.tag-pronunciation-error').isVisible()
+      && await page.inputValue('#text') === '重庆今天出发。');
+    await pinyin.fill('chong2 qing4');
+    await pronunciationForm.locator('button[type="submit"]').click();
+    check('one_pinyin_syllable_is_wrapped_per_hanzi',
+      await page.inputValue('#text') ===
+        '<|phoneme_start|>chong2<|phoneme_end|><|phoneme_start|>qing4<|phoneme_end|>今天出发。');
+    check('phoneme_controls_receive_editor_decoration',
+      await editor().locator('.script-phoneme').count() === 2);
+    await editor().locator('.script-phoneme').first().click();
+    await pronunciationAction.click();
+    await pinyin.fill('zhong4');
+    await pronunciationForm.locator('button[type="submit"]').click();
+    check('existing_phoneme_control_can_be_edited',
+      await page.inputValue('#text') ===
+        '<|phoneme_start|>zhong4<|phoneme_end|><|phoneme_start|>qing4<|phoneme_end|>今天出发。');
+    await host().locator('[data-label="Undo"]').click();
+    await host().locator('[data-label="Undo"]').click();
+    check('phoneme_insert_and_revision_are_undoable',
+      await page.inputValue('#text') === '重庆今天出发。');
+    await page.evaluate(() => I18n.setLocale('en'));
+    await editor().fill('重庆。'); await nativeSelect(0, 2, true);
+    check('pronunciation_action_is_hidden_in_non_chinese_ui', await pronunciationAction.isHidden());
+    await close();
+    await page.evaluate(() => I18n.setLocale('zh-CN'));
+
+    await editor().fill('你好，这是一次本地语音测试。');
     await editor().press('End'); await editor().press('ArrowLeft');
     await editor().press('Shift+ArrowLeft'); await editor().press('Shift+ArrowLeft');
     await open();

@@ -1,7 +1,8 @@
 import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView, Decoration, ViewPlugin, keymap, placeholder, drawSelection } from '@codemirror/view';
 import { history, historyKeymap, defaultKeymap, undo, redo } from '@codemirror/commands';
-import { createElement, Tag, Undo2, Redo2, Code2, X, Search, ArrowLeftRight, Plus, Play, Pause, Trash2 } from 'lucide';
+import { createElement, Tag, Undo2, Redo2, Code2, X, Search, Languages,
+  ArrowLeftRight, Plus, Play, Pause, Trash2 } from 'lucide';
 import { tagCategories, tagSections } from './tag-catalog.js';
 import { parseDialogue, formatDialogue, reconcileDialogue, maxSpeakers } from './dialogue.js';
 
@@ -21,6 +22,12 @@ const button = (icon, label) => {
 function tokens(text) {
   const found = [], stack = [];
   const syntax = /<(\/?)(whisper|emphasis|soft|fast|slow|stress|forceful)>|\[([^\]\n]{1,160})\]/g;
+  const phonemes = /<\|phoneme_start\|>([^<>]*?)<\|phoneme_end\|>/g;
+  for (const match of text.matchAll(phonemes)) {
+    const from = match.index, contentFrom = from + '<|phoneme_start|>'.length;
+    const contentTo = contentFrom + match[1].length, to = contentTo + '<|phoneme_end|>'.length;
+    found.push({ from, to, contentFrom, contentTo, kind: 'phoneme', value: match[1] });
+  }
   for (const match of text.matchAll(syntax)) {
     const from = match.index, to = from + match[0].length;
     if (match[3]) found.push({ from, to, kind: 'event', value: match[3] });
@@ -83,6 +90,40 @@ function mount(textarea) {
   search.autocomplete = 'off'; search.setAttribute('aria-label', t('Search tags'));
   const close = button(X, 'Close'); searchRow.append(search, close);
   const scopeChoices = document.createElement('div'); scopeChoices.className = 'tag-scopes';
+  const pronunciationButton = document.createElement('button');
+  pronunciationButton.type = 'button'; pronunciationButton.className = 'tag-option tag-pronunciation-action';
+  pronunciationButton.dataset.action = 'phoneme';
+  pronunciationButton.append(createElement(Languages, { width: 16, height: 16, 'aria-hidden': 'true' }));
+  const pronunciationLabel = document.createElement('span'); pronunciationLabel.textContent = t('Control pronunciation');
+  pronunciationButton.append(pronunciationLabel);
+  const pronunciationForm = document.createElement('form');
+  pronunciationForm.className = 'tag-pronunciation-form'; pronunciationForm.hidden = true;
+  const pronunciationSource = document.createElement('div'); pronunciationSource.className = 'tag-pronunciation-source';
+  const pronunciationField = document.createElement('label');
+  pronunciationField.className = 'tag-pronunciation-field';
+  const pronunciationFieldLabel = document.createElement('span');
+  pronunciationFieldLabel.textContent = t('Pinyin for selected Chinese characters');
+  const pronunciationInput = document.createElement('input');
+  pronunciationInput.type = 'text'; pronunciationInput.autocomplete = 'off';
+  pronunciationInput.spellcheck = false; pronunciationInput.placeholder = 'chong2 qing4';
+  pronunciationInput.setAttribute('aria-label', t('Pinyin for selected Chinese characters'));
+  pronunciationField.append(pronunciationFieldLabel, pronunciationInput);
+  const pronunciationHelp = document.createElement('p');
+  pronunciationHelp.className = 'tag-pronunciation-help';
+  pronunciationHelp.textContent = t('Enter one tone-number pinyin syllable per Chinese character, separated by spaces.');
+  const pronunciationError = document.createElement('p');
+  pronunciationError.className = 'tag-pronunciation-error'; pronunciationError.hidden = true;
+  pronunciationError.setAttribute('role', 'status'); pronunciationError.setAttribute('aria-live', 'polite');
+  const pronunciationActions = document.createElement('div'); pronunciationActions.className = 'tag-pronunciation-actions';
+  const pronunciationSubmit = document.createElement('button');
+  pronunciationSubmit.type = 'submit'; pronunciationSubmit.className = 'tag-option';
+  pronunciationSubmit.textContent = t('Insert pronunciation');
+  const pronunciationCancel = document.createElement('button');
+  pronunciationCancel.type = 'button'; pronunciationCancel.className = 'text-btn';
+  pronunciationCancel.textContent = t('Cancel');
+  pronunciationActions.append(pronunciationSubmit, pronunciationCancel);
+  pronunciationForm.append(pronunciationSource, pronunciationField, pronunciationHelp,
+    pronunciationError, pronunciationActions);
   const navigation = document.createElement('div'); navigation.className = 'tag-categories';
   navigation.setAttribute('role', 'tablist'); navigation.setAttribute('aria-label', t('Tag categories'));
   const choices = document.createElement('div'); choices.className = 'tag-choices';
@@ -91,10 +132,12 @@ function mount(textarea) {
   const customInput = document.createElement('input');
   customInput.maxLength = 160; customInput.setAttribute('aria-label', t('Custom direction'));
   const insert = document.createElement('button'); insert.type = 'submit'; insert.className = 'text-btn';
+  insert.textContent = t('Insert tag');
   custom.append(customInput, insert);
   panel.append(searchRow, scopeChoices, navigation, choices, custom); host.append(panel);
   const editable = new Compartment(), prompt = new Compartment();
   let syncing = false, isRaw = false, savedSelection = null, activeToken = null, pendingSelection = null;
+  let pronunciationRange = null;
   let category = 'emotions', scrollFrame = 0;
   let disabled = textarea.disabled, readOnly = textarea.readOnly, promptText = textarea.placeholder;
   const access = () => [
@@ -168,6 +211,7 @@ function mount(textarea) {
   function closePanel(focus = true) {
     panel.hidden = true; tags.setAttribute('aria-expanded', 'false');
     pendingSelection = savedSelection = activeToken = null;
+    pronunciationRange = null; pronunciationForm.hidden = true; pronunciationError.hidden = true;
     if (focus) view.focus();
   }
   function captureSelection() {
@@ -185,6 +229,12 @@ function mount(textarea) {
     }
     return view.state.selection.main;
   }
+  function crossesDialogueTurn(from, to) {
+    if (textarea.dataset.dialogue !== 'true') return false;
+    const selected = view.state.doc.sliceString(from, to);
+    return selected.includes('\n')
+      || /(?:^|\n)\s*(?:[Ss]\d+\s*[:：]|<\|speaker:\d+\|>)/.test(selected);
+  }
   function apply(value, kind) {
     if (view.composing || textarea.disabled || textarea.readOnly) return;
     const doc = view.state.doc.toString();
@@ -200,7 +250,7 @@ function mount(textarea) {
     } else if (kind === 'scope') {
       if (current?.kind === 'scope') { from = current.from; to = current.to; }
       if (from === to) { tell('Select words first'); return; }
-      if (textarea.dataset.dialogue === 'true' && parseDialogue(doc).turns.some(turn => turn.from < to && turn.to > from)) {
+      if (crossesDialogueTurn(from, to)) {
         tell('Select words within one speaker’s turn.'); return;
       }
       const overlapping = tokens(doc).filter(token => token.kind === 'scope' && token.from < to && token.to > from);
@@ -219,6 +269,67 @@ function mount(textarea) {
     }
     view.dispatch({ changes, selection: { anchor: cursor }, userEvent: 'input.tag' });
     closePanel(); activeToken = null; savedSelection = null;
+  }
+  function openPronunciation() {
+    if (!/^zh(?:-|$)/i.test(window.I18n.locale) || view.composing) return;
+    const doc = view.state.doc.toString(), selection = savedSelection || view.state.selection.main;
+    const token = activeToken?.kind === 'phoneme' ? activeToken : null;
+    const from = token?.from ?? selection.from, to = token?.to ?? selection.to;
+    const selectedText = doc.slice(from, to);
+    if (!token && selection.empty) { tell('Select Chinese text first.'); return; }
+    if (crossesDialogueTurn(from, to)) {
+      tell('Select Chinese text within one speaker’s turn.'); return;
+    }
+    pronunciationRange = { from, to, token };
+    pronunciationSource.textContent = token ? token.value : selectedText;
+    pronunciationInput.value = token ? token.value : '';
+    pronunciationError.hidden = true;
+    pronunciationForm.hidden = false;
+    pronunciationButton.after(pronunciationForm);
+    pronunciationInput.focus();
+  }
+  function applyPronunciation(event) {
+    event.preventDefault();
+    if (view.composing || textarea.disabled || textarea.readOnly || !pronunciationRange) return;
+    const { from, to, token } = pronunciationRange;
+    const doc = view.state.doc.toString(), selectedText = doc.slice(from, to);
+    const syllables = pronunciationInput.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const hanzi = Array.from(selectedText).filter(character => /\p{Script=Han}/u.test(character));
+    const fail = message => {
+      pronunciationError.textContent = t(message);
+      pronunciationError.hidden = false;
+    };
+    if (!syllables.length || syllables.some(value => !/^[a-züvê]+[1-5]$/u.test(value))) {
+      fail('Use lowercase pinyin syllables with tone numbers from 1 to 5.');
+      return;
+    }
+    if (token) {
+      if (syllables.length !== 1) {
+        fail('Enter one pinyin syllable for the selected character.');
+        return;
+      }
+    } else {
+      if (!hanzi.length) { fail('Select Chinese text first.'); return; }
+      if (syllables.length !== hanzi.length) {
+        fail('Enter one pinyin syllable for each selected Chinese character.');
+        return;
+      }
+      if (tokens(doc).some(item => item.kind === 'phoneme' && item.from < to && item.to > from)) {
+        fail('The selection contains an existing pronunciation tag. Edit that tag separately.');
+        return;
+      }
+    }
+    let replacement;
+    if (token) {
+      replacement = `<|phoneme_start|>${syllables[0]}<|phoneme_end|>`;
+    } else {
+      let index = 0;
+      replacement = Array.from(selectedText, character => /\p{Script=Han}/u.test(character)
+        ? `<|phoneme_start|>${syllables[index++]}<|phoneme_end|>` : character).join('');
+    }
+    view.dispatch({ changes: { from, to, insert: replacement },
+      selection: { anchor: from + replacement.length }, userEvent: 'input.phoneme' });
+    closePanel();
   }
   function positionPanel(realign = false) {
     if (panel.hidden) return;
@@ -280,6 +391,7 @@ function mount(textarea) {
   function drawChoices() {
     choices.replaceChildren(); scopeChoices.replaceChildren();
     const selection = savedSelection || view.state.selection.main;
+    const chineseUI = /^zh(?:-|$)/i.test(window.I18n.locale);
     const query = search.value.trim().normalize('NFKC').toLowerCase();
     const append = (container, title, items, kind) => {
       const matches = items.filter(([value, caption, aliases = []]) =>
@@ -304,7 +416,17 @@ function mount(textarea) {
       return matches.length;
     };
     const scopeCount = append(scopeChoices, 'Control selected words', scopes, 'scope');
-    scopeChoices.hidden = !scopeCount;
+    const selectionText = selection.empty ? '' : view.state.doc.sliceString(selection.from, selection.to);
+    const hasChineseText = /\p{Script=Han}/u.test(selectionText);
+    const showPronunciation = chineseUI && (hasChineseText || activeToken?.kind === 'phoneme');
+    pronunciationButton.hidden = !showPronunciation;
+    if (!chineseUI) {
+      pronunciationForm.hidden = true;
+      pronunciationRange = null;
+    }
+    scopeChoices.append(pronunciationButton);
+    if (!pronunciationForm.hidden && showPronunciation) scopeChoices.append(pronunciationForm);
+    scopeChoices.hidden = !scopeCount && !showPronunciation;
     navigation.hidden = Boolean(query);
     choices.classList.toggle('tag-search-results', Boolean(query));
     selectCategory(category);
@@ -323,7 +445,7 @@ function mount(textarea) {
       const empty = document.createElement('p'); empty.className = 'tag-empty';
       empty.textContent = t('No matching tags'); choices.append(empty);
     }
-    if (activeToken) {
+    if (activeToken && activeToken.kind !== 'phoneme') {
       const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'text-btn';
       remove.textContent = t('Remove tag'); remove.onclick = () => apply('', 'remove'); scopeChoices.append(remove);
       scopeChoices.hidden = false;
@@ -391,6 +513,12 @@ function mount(textarea) {
     if (!scrollFrame) scrollFrame = requestAnimationFrame(followCategory);
   });
   search.oninput = drawChoices;
+  pronunciationButton.onclick = openPronunciation;
+  pronunciationForm.onsubmit = applyPronunciation;
+  pronunciationCancel.onclick = () => {
+    pronunciationRange = null; pronunciationForm.hidden = true; pronunciationError.hidden = true;
+    pronunciationButton.focus();
+  };
   custom.onsubmit = event => {
     event.preventDefault();
     const value = customInput.value.trim();
@@ -401,7 +529,7 @@ function mount(textarea) {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePanel(); }
   });
   document.addEventListener('pointerdown', event => {
-    if (!panel.hidden && !host.contains(event.target)) closePanel(false);
+    if (!panel.hidden && !panel.contains(event.target) && !tags.contains(event.target)) closePanel(false);
   });
   canvas.addEventListener('dblclick', event => {
     const target = event.target.closest('.script-capsule');
@@ -411,7 +539,7 @@ function mount(textarea) {
     if (token) { event.preventDefault(); open(token); }
   });
   canvas.addEventListener('click', event => {
-    const target = event.target.closest('.script-tag-edge,.script-event');
+    const target = event.target.closest('.script-tag-edge,.script-event,.script-phoneme');
     if (!target || view.composing) return;
     const offset = view.posAtDOM(target);
     const token = tokens(view.state.doc.toString()).find(item => item.from <= offset && item.to > offset);
@@ -424,7 +552,12 @@ function mount(textarea) {
     label.textContent = t('Tags'); search.placeholder = t('Search tags');
     search.setAttribute('aria-label', t('Search tags'));
     view.contentDOM.setAttribute('aria-label', textarea.getAttribute('aria-label') || t('Text to speak'));
-    customInput.placeholder = t('Custom direction'); insert.textContent = t('Insert');
+    customInput.placeholder = t('Custom direction'); insert.textContent = t('Insert tag');
+    pronunciationLabel.textContent = t('Control pronunciation');
+    pronunciationFieldLabel.textContent = t('Pinyin for selected Chinese characters');
+    pronunciationInput.setAttribute('aria-label', t('Pinyin for selected Chinese characters'));
+    pronunciationHelp.textContent = t('Enter one tone-number pinyin syllable per Chinese character, separated by spaces.');
+    pronunciationSubmit.textContent = t('Insert pronunciation'); pronunciationCancel.textContent = t('Cancel');
     customInput.setAttribute('aria-label', t('Custom direction')); close.setAttribute('aria-label', t('Close'));
     panel.setAttribute('aria-label', t('Tags')); close.title = t('Close');
     navigation.setAttribute('aria-label', t('Tag categories'));

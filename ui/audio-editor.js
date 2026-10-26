@@ -106,9 +106,11 @@
         duration: '', temperature: String(recipe.temperature ?? document.querySelector('#temperature').value),
         top_p: String(recipe.top_p ?? document.querySelector('#top-p').value),
         top_k: String(recipe.top_k ?? document.querySelector('#top-k').value),
+        max_chars: String(recipe.max_chunk_chars ?? 160),
         seed: String(recipe.seed ?? 123), random: true,
       },
     };
+    draft.parameters.max_chars ||= '160';
     // Migrate the actual text difference, never a guessed word/audio alignment.
     if (draft.local.lines) {
       draft.previous_local = copy(draft.local);
@@ -164,6 +166,7 @@
     const audio = el('audio'); audio.id = 'audio-edit-source'; audio.controls = true;
     audio.preload = 'metadata'; audio.src = fileUrl(version.output);
     audio.dataset.selection = 'true'; audio.dataset.selectionRequired = 'true';
+    audio.dataset.waveWindow = '15';
     const secondsPerFrame = version.take.samples_per_frame / version.take.sample_rate;
     audio.dataset.frameSeconds = secondsPerFrame;
     const localActions = el('div', 'audio-edit-range-actions');
@@ -241,6 +244,7 @@
     for (const [key, caption, min, max, step] of [
       ['maximum', 'Max duration (seconds)', '.01', '95.109', 'any'],
       ['duration', 'Target duration (seconds)', '.01', '95.109', 'any'],
+      ['max_chars', 'Text chunk target', '80', '320', '1'],
       ['temperature', 'Temperature', '0', '2', 'any'], ['top_p', 'Top P', '0', '1', 'any'],
       ['top_k', 'Top K', '0', '8193', '1'], ['seed', 'Seed', '0', String(2 ** 32 - 1), '1'],
     ]) {
@@ -646,6 +650,7 @@
       return {
         seed: random.checked ? crypto.getRandomValues(new Uint32Array(1))[0] : read('seed'),
         temperature: read('temperature'), top_p: read('top_p'), top_k: read('top_k'),
+        max_chunk_chars: Math.round(read('max_chars')),
         max_new_tokens: Math.max(1, Math.round(maximum * 44100 / 2048)),
         duration_frames: duration ? Math.max(1, Math.round(duration * 44100 / 2048)) : null,
       };

@@ -44,7 +44,7 @@
     contexts: new Map(), contextLoads: new Map(), streamDraft: null, switchingInput: false };
   flow.voiceDraft = { main: ReferencePrep.fresh(), extraReferences: [] };
   const formIds = ['text', 'direction', 'language', 'seed', 'max-frames', 'duration',
-    'target-seconds', 'max-seconds', 'temperature', 'top-p', 'top-k', 'candidate-count', 'chunks',
+    'target-seconds', 'max-seconds', 'max-chars', 'temperature', 'top-p', 'top-k', 'candidate-count', 'chunks',
     'source-take', 'previous-take', 'start-time', 'end-time', 'start-frame', 'end-frame'];
   let saveTimer;
   function fail(error, source = 'action') {
@@ -61,12 +61,14 @@
   }
   function settings({ checkDuration = false, scene = false } = {}) {
     const control = id => $(scene ? `scene-${id}` : id);
-    for (const id of ['max-seconds', 'temperature', 'top-p', 'top-k', ...(scene ? [] : ['candidate-count'])]) {
+    for (const id of ['max-seconds', 'max-chars', 'temperature', 'top-p', 'top-k',
+      ...(scene ? [] : ['candidate-count'])]) {
       if (!control(id).value || !control(id).checkValidity()) throw new Error(t('Check generation settings.'));
     }
     const values = {
       seed: control('random-seed').checked ? randomSeed() : UiNumber.read(control('seed')),
       max_new_tokens: Math.max(1, Math.min(2048, Math.round(UiNumber.read(control('max-seconds')) * 44100 / 2048))),
+      max_chunk_chars: Math.round(UiNumber.read(control('max-chars'))),
       temperature: UiNumber.read(control('temperature')), top_p: UiNumber.read(control('top-p')),
       top_k: UiNumber.read(control('top-k')),
     };
@@ -113,7 +115,7 @@
     return { ...copy(flow.scene), script: $('dialogue-script').value, scriptVersion: 1,
       active_job_id: state.resultJobs.scene?.id || null,
       generation: { random: $('scene-random-seed').checked, form: Object.fromEntries(
-        ['seed', 'max-seconds', 'temperature', 'top-p', 'top-k']
+        ['seed', 'max-seconds', 'max-chars', 'temperature', 'top-p', 'top-k']
           .map(id => [id, UiNumber.value($(`scene-${id}`))])) } };
   }
   function saveSoon() {
@@ -382,6 +384,7 @@
       $('direction').value = action === 'revision' ? '' : recipe.direction || '';
       $('language').value = recipe.language || '';
       if (recipe.max_new_tokens) UiNumber.write($('max-seconds'), recipe.max_new_tokens * 2048 / 44100);
+      if (recipe.max_chunk_chars !== undefined) UiNumber.write($('max-chars'), recipe.max_chunk_chars);
       UiNumber.write($('target-seconds'), recipe.duration_frames ? recipe.duration_frames * 2048 / 44100 : '');
       if (recipe.seed !== undefined) $('seed').value = recipe.seed;
       for (const [key, id] of [['temperature', 'temperature'], ['top_p', 'top-p'], ['top_k', 'top-k']]) {
@@ -439,6 +442,7 @@
     for (const [key, id] of [['temperature', 'temperature'], ['top_p', 'top-p'], ['top_k', 'top-k'], ['seed', 'seed']]) {
       if (recipe[key] !== undefined) UiNumber.write($(`scene-${id}`), recipe[key]);
     }
+    if (recipe.max_chunk_chars !== undefined) UiNumber.write($('scene-max-chars'), recipe.max_chunk_chars);
     if (recipe.max_new_tokens) UiNumber.write($('scene-max-seconds'), recipe.max_new_tokens * 2048 / 44100);
     view('scene'); enhanceAllSelects(); saveSoon();
   }
@@ -655,6 +659,7 @@
     add('Generation mode', recipe.mode ? t(modeLabel(recipe.mode)) : undefined);
     add('Seed', recipe.seed); add('Temperature', recipe.temperature);
     add('Top P', recipe.top_p); add('Top K', recipe.top_k);
+    add('Text chunk target', recipe.max_chunk_chars);
     add('Max duration (seconds)', recipe.max_new_tokens === undefined ? undefined
       : UiNumber.format(recipe.max_new_tokens * 2048 / 44100));
     add('Target duration (seconds)', recipe.duration_frames
@@ -981,16 +986,17 @@
     internal.append(task);
     const performance = node('div', 'performance-fields');
     const direction = $('direction').parentElement; const language = $('language').parentElement;
-    performance.append(direction, language); $('advanced-settings').before(performance);
+    performance.append(direction); $('advanced-settings').before(performance);
     $('direction').placeholder = ''; $('direction').removeAttribute('data-i18n-placeholder');
     const context = $('previous-take').closest('.source-path-row');
     const label = document.querySelector('label[for="previous-take"]');
-    internal.append(label, context, $('infill-source-location'));
+    internal.append(label, context, language, $('infill-source-location'));
     document.querySelector('#infill-source-preview .edit-source-heading').append($('inspect-infill-source'));
     const controls = node('div', 'field-grid');
     for (const [id, label, value, step, min, max] of [
       ['target-seconds', 'Target duration (seconds)', '', 'any', '.01', '95.109'],
       ['max-seconds', 'Max duration (seconds)', '35.67', 'any', '.01', '95.109'],
+      ['max-chars', 'Text chunk target', '160', '1', '80', '320'],
       ['temperature', 'Temperature', '0.8', 'any', '0', '2'],
       ['top-p', 'Top P', '.8', 'any', '0', '1'],
       ['top-k', 'Top K', '0', '1', '0', '8193'],
@@ -1642,6 +1648,7 @@
     const fields = node('div', 'field-grid');
     for (const [id, label, value, step, min, max] of [
       ['max-seconds', 'Max dialogue length (seconds)', UiNumber.format(768 * 2048 / 44100), 'any', '.01', '95.109'],
+      ['max-chars', 'Text chunk target', '160', '1', '80', '320'],
       ['temperature', 'Temperature', state.model?.runtime === 'gguf' ? '1' : '.7', 'any', '0', '2'],
       ['top-p', 'Top P', state.model?.runtime === 'gguf' ? '.9' : '.7', 'any', '0', '1'],
       ['top-k', 'Top K', '0', '1', '0', '8193'],
@@ -1885,7 +1892,6 @@
     performance.classList.add('inline-direction');
     scriptLabel.before(performance);
     $('direction').dataset.i18nPlaceholder = 'optional'; $('direction').placeholder = t('optional');
-    $('advanced-settings').querySelector('.advanced-content').prepend($('language').parentElement);
     const seedField = $('seed').parentElement, formerSeedRow = seedField.parentElement;
     $('temperature').parentElement.parentElement.append(seedField);
     formerSeedRow.hidden = true;

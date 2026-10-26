@@ -106,6 +106,15 @@ def test_zero_top_k_is_accepted_and_forwarded_to_native_worker(engine, tmp_path)
     assert result["request_echo"]["top_k"] == 0
 
 
+def test_phoneme_tags_are_forwarded_and_malformed_pairs_fail_early(engine, tmp_path):
+    text = "Name<|phoneme_start|>chong2<|phoneme_end|><|phoneme_start|>qing4<|phoneme_end|>"
+    result = engine.generate(text, tmp_path / "phoneme.wav")
+    assert result["request_echo"]["text"] == f"<|speaker:0|> {text}"
+    with pytest.raises(ValueError, match="phoneme"):
+        engine.generate("重庆<|phoneme_start|>chong2", tmp_path / "malformed.wav")
+    assert engine.loaded
+
+
 def test_validation_error_keeps_session_and_fatal_error_reaps_it(engine, tmp_path):
     first = engine.generate("one", tmp_path / "one.wav")
     with pytest.raises(runtime.NativeFailure, match="invalid request"):
@@ -364,7 +373,7 @@ def test_oom_after_audio_delivery_never_retries_or_duplicates_segments(engine, t
 
 
 def test_task_markers_and_unsupported_worker_are_rejected_before_loading(engine, tmp_path):
-    with pytest.raises(ValueError, match="Structural task"):
+    with pytest.raises(ValueError, match="structural task"):
         engine.generate("Hello <|fim_prefix|>", tmp_path / "bad.wav")
     with pytest.raises(RuntimeError, match="protocol 3"):
         engine.generate("Hello.", tmp_path / "bad.wav", task_mode="stream", lookahead="Next.")

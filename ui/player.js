@@ -80,7 +80,10 @@
     const seek = document.createElement('input');
     Object.assign(seek, { type: 'range', min: '0', max: '0', step: '0.01', value: '0',
       className: 'player-seek', disabled: true });
-    track.append(surface, seek);
+    const timeline = document.createElement('div'); timeline.className = 'player-wave-timeline'; timeline.hidden = true;
+    timeline.setAttribute('aria-hidden', 'true');
+    const ticks = Array.from({ length: 3 }, () => document.createElement('span'));
+    timeline.append(...ticks); track.append(surface, timeline, seek);
     const time = document.createElement('div'); time.className = 'player-time';
     const current = document.createElement('span'), duration = document.createElement('span');
     time.append(current, duration);
@@ -99,18 +102,41 @@
     controls.append(regionInfo);
     const preview = button('player-preview-selection', controls), clear = button('player-clear-selection', controls);
     const zoomOut = button('player-zoom-out', controls), zoomIn = button('player-zoom-in', controls);
+    // Replacing icon nodes during playback can swallow a mouse click before pointerup.
+    play.innerHTML = svg('play'); mute.innerHTML = svg('volume');
+    preview.innerHTML = svg('play'); clear.innerHTML = svg('close');
+    const previewLabel = document.createElement('span'); preview.append(previewLabel);
+    zoomOut.textContent = '−'; zoomIn.textContent = '+';
     const hint = document.createElement('span'); hint.className = 'player-wave-hint'; controls.append(hint);
     const error = document.createElement('p'); error.className = 'player-error'; error.hidden = true; box.append(error);
     const ui = { audio, box, track, surface, seek, wave, region, handles, pan, play, rate,
       current, duration, error, selection: null, zoom: 1, offset: 0, waveSource: null,
-      source: audio.getAttribute('src'), stopAt: null, raf: null, abort: null, request: 0, peaks: null };
+      source: audio.getAttribute('src'), stopAt: null, raf: null, abort: null, request: 0, peaks: null,
+      viewReady: false, followPlayback: false };
+    let drag = null, edgeRaf = null;
     players.set(audio, ui); all.add(ui);
     const valid = () => Number.isFinite(audio.duration) && audio.duration > 0;
     const selectable = () => audio.dataset.selection === 'true';
     const width = () => audio.duration / ui.zoom;
+    const maxZoom = () => Math.max(8, audio.duration);
     const fraction = value => (value - ui.offset) / width();
+    const setText = (node, value) => { if (node.textContent !== value) node.textContent = value; };
+    const setIcon = (node, name) => {
+      const use = node.querySelector('use'), href = `#i-${name}`;
+      if (use.getAttribute('href') !== href) use.setAttribute('href', href);
+    };
     const notify = () => audio.dispatchEvent(new CustomEvent('drama:selectionchange',
       { bubbles: true, detail: ui.selection ? { ...ui.selection } : null }));
+    function setOffset(value) {
+      const next = clamp(value, 0, Math.max(0, audio.duration - width()));
+      if (Math.abs(next - ui.offset) < 0.000001) return;
+      ui.offset = next; drawWave();
+    }
+    function revealPlayhead() {
+      if (!valid() || ui.zoom === 1) return;
+      if (fraction(audio.currentTime) < 0 || fraction(audio.currentTime) >= 1)
+        setOffset(Math.floor(audio.currentTime / width()) * width());
+    }
     function renderRegion() {
       const has = valid() && selectable() && ui.selection !== null;
       region.hidden = !has; box.classList.toggle('has-selection', has);
@@ -145,7 +171,13 @@
         a = clamp(Math.floor(snap(a / step)) * step, 0, limit);
         b = equal ? a : clamp(Math.ceil(snap(b / step)) * step, 0, limit);
       }
+      const firstSelection = !ui.selection;
+      if (ui.selection?.start !== a || ui.selection?.end !== b) ui.stopAt = null;
       ui.selection = { start: a, end: b };
+      if (firstSelection && !drag && Number(audio.dataset.waveWindow) > 0
+        && (fraction(a) < 0 || fraction(b) > 1)) {
+        setOffset((a + b - width()) / 2); update();
+      }
       renderRegion(); if (emit) notify();
     }
     function drawWave() {
@@ -170,8 +202,16 @@
     function update() {
       if (audio.getAttribute('src') !== ui.source) {
         ui.source = audio.getAttribute('src'); ui.selection = null; ui.zoom = 1; ui.offset = 0; ui.stopAt = null;
+        ui.viewReady = false; ui.followPlayback = false;
         ui.waveSource = null; ui.peaks = null; wave.replaceChildren();
         notify();
+      }
+      if (valid() && !ui.viewReady) {
+        const target = Number(audio.dataset.waveWindow);
+        ui.viewReady = true;
+        ui.zoom = target > 0 ? clamp(audio.duration / target, 1, maxZoom()) : 1;
+        ui.offset = clamp(audio.currentTime - width() / 2, 0, audio.duration - width());
+        drawWave();
       }
       track.classList.toggle('with-waveform', Boolean(audio.getAttribute('src')));
       if (valid()) seek.max = audio.duration;
@@ -181,22 +221,29 @@
       if (valid()) playhead.style.left = `${clamp(fraction(audio.currentTime), 0, 1) * 100}%`;
       [...wave.children].forEach((bar, index) => bar.classList.toggle('played',
         valid() && index < fraction(audio.currentTime) * wave.childElementCount));
-      current.textContent = clock(audio.currentTime); duration.textContent = valid() ? clock(audio.duration) : '--:--';
+      setText(current, clock(audio.currentTime)); setText(duration, valid() ? clock(audio.duration) : '--:--');
       seek.setAttribute('aria-valuetext', `${clock(audio.currentTime)} / ${clock(audio.duration)}`);
-      play.innerHTML = svg(audio.paused ? 'play' : 'pause');
+      const previewing = !audio.paused && ui.stopAt !== null;
+      setIcon(play, audio.paused ? 'play' : 'pause');
+      setIcon(preview, previewing ? 'pause' : 'play');
       for (const [node, label] of [
         [play, audio.paused ? 'Play audio' : 'Pause audio'], [seek, 'Audio position'], [rate, 'Playback speed'],
         [mute, audio.muted || audio.volume === 0 ? 'Unmute audio' : 'Mute audio'], [volume, 'Volume'],
-        [preview, 'Play selection'], [clear, 'Clear selection'], [zoomOut, 'Zoom out waveform'],
+        [preview, previewing ? 'Pause selection' : 'Play selection'], [clear, 'Clear selection'], [zoomOut, 'Zoom out waveform'],
         [zoomIn, 'Zoom in waveform'], [pan, 'Waveform position'],
       ]) { node.setAttribute('aria-label', t(label)); node.title = t(label); }
-      preview.innerHTML = `${svg('play')}<span>${t('Play selection')}</span>`; clear.innerHTML = svg('close');
-      zoomOut.textContent = '−'; zoomIn.textContent = '+';
-      rate.textContent = `${audio.playbackRate}×`;
-      mute.innerHTML = svg(audio.muted || audio.volume === 0 ? 'muted' : 'volume');
+      setText(previewLabel, t(previewing ? 'Pause selection' : 'Play selection'));
+      setText(rate, `${audio.playbackRate}×`);
+      setIcon(mute, audio.muted || audio.volume === 0 ? 'muted' : 'volume');
       volume.value = audio.muted ? 0 : audio.volume;
-      zoomOut.disabled = !ui.peaks || ui.zoom === 1; zoomIn.disabled = !ui.peaks || ui.zoom >= 8;
-      pan.hidden = ui.zoom === 1; pan.max = valid() ? audio.duration - width() : 0; pan.value = ui.offset;
+      zoomOut.disabled = !ui.peaks || ui.zoom === 1; zoomIn.disabled = !ui.peaks || ui.zoom >= maxZoom();
+      pan.hidden = !valid() || ui.zoom === 1;
+      pan.max = valid() ? Math.max(0, audio.duration - width()) : 0; pan.value = ui.offset;
+      pan.style.setProperty('--pan-size', `${Math.max(24, surface.clientWidth / ui.zoom)}px`);
+      pan.setAttribute('aria-valuetext', valid() ? `${clock(ui.offset, true)} – ${clock(ui.offset + width(), true)}` : '');
+      timeline.hidden = pan.hidden;
+      if (!timeline.hidden) ticks.forEach((tick, index) =>
+        setText(tick, clock(ui.offset + width() * index / (ticks.length - 1), width() < 5)));
       box.classList.toggle('wave-selectable', selectable());
       hint.textContent = ''; hint.hidden = true;
       surface.title = selectable() && !ui.selection ? t('Drag on the waveform to select') : '';
@@ -204,25 +251,35 @@
     }
     async function startPlayback(end = null) {
       for (const other of all) if (other.audio !== audio && !other.audio.paused) other.audio.pause();
-      ui.stopAt = end; error.hidden = true;
+      ui.stopAt = end; ui.followPlayback = true; revealPlayhead(); error.hidden = true;
       try { await audio.play(); }
-      catch (_) { error.textContent = t('Unable to play this audio.'); error.hidden = false; }
+      catch (failure) {
+        if (failure.name !== 'AbortError') { error.textContent = t('Unable to play this audio.'); error.hidden = false; }
+      }
     }
     function watchPlayback() {
       if (ui.stopAt !== null && audio.currentTime >= ui.stopAt) {
         const end = ui.stopAt; ui.stopAt = null; audio.pause(); audio.currentTime = end;
       }
+      if (ui.followPlayback && !drag) revealPlayhead();
       update();
       if (!audio.paused && box.isConnected) ui.raf = requestAnimationFrame(watchPlayback);
     }
     play.onclick = () => audio.paused ? startPlayback() : audio.pause();
     preview.onclick = () => {
       if (!ui.selection || ui.selection.end <= ui.selection.start) return;
-      audio.currentTime = ui.selection.start; startPlayback(ui.selection.end);
+      if (!audio.paused && ui.stopAt !== null) { audio.pause(); return; }
+      const resume = ui.stopAt === ui.selection.end && audio.currentTime >= ui.selection.start
+        && audio.currentTime < ui.selection.end;
+      if (!resume) audio.currentTime = ui.selection.start;
+      startPlayback(ui.selection.end);
     };
     clear.onclick = () => { ui.selection = null; ui.stopAt = null; update(); notify(); };
     seek.addEventListener('input', () => {
-      if (!seek.disabled) { ui.stopAt = null; audio.currentTime = Number(seek.value); } update();
+      if (!seek.disabled) {
+        ui.stopAt = null; audio.currentTime = Number(seek.value); ui.followPlayback = true; revealPlayhead();
+      }
+      update();
     });
     rate.onclick = () => {
       const rates = [1, 1.25, 1.5, 2, 0.75];
@@ -232,32 +289,33 @@
     volume.addEventListener('input', () => { audio.muted = false; audio.volume = Number(volume.value); update(); });
     function zoom(multiplier) {
       if (!valid() || !ui.peaks) return;
-      const center = ui.selection ? (ui.selection.start + ui.selection.end) / 2 : ui.offset + width() / 2;
-      ui.zoom = clamp(ui.zoom * multiplier, 1, 8);
+      const center = ui.selection ? (ui.selection.start + ui.selection.end) / 2
+        : fraction(audio.currentTime) >= 0 && fraction(audio.currentTime) <= 1
+          ? audio.currentTime : ui.offset + width() / 2;
+      ui.followPlayback = false;
+      ui.zoom = clamp(ui.zoom * multiplier, 1, maxZoom());
       ui.offset = clamp(center - width() / 2, 0, audio.duration - width()); drawWave(); update();
     }
     zoomIn.onclick = () => zoom(2); zoomOut.onclick = () => zoom(0.5);
-    pan.addEventListener('input', () => { ui.offset = Number(pan.value); drawWave(); update(); });
-    let drag = null;
+    pan.addEventListener('input', () => {
+      ui.followPlayback = false; setOffset(Number(pan.value)); update();
+    });
     const timeAt = event => {
       const bounds = surface.getBoundingClientRect();
       return clamp(ui.offset + clamp((event.clientX - bounds.left) / bounds.width, 0, 1) * width(), 0, audio.duration);
     };
     surface.addEventListener('pointerdown', event => {
       if (!valid() || event.button !== 0 || drag) return;
-      event.preventDefault(); audio.pause(); ui.stopAt = null;
+      event.preventDefault(); audio.pause(); ui.stopAt = null; ui.followPlayback = false;
       const edge = event.target.closest('[data-edge]')?.dataset.edge;
-      drag = { id: event.pointerId, x: event.clientX, anchor: timeAt(event),
+      drag = { id: event.pointerId, x: event.clientX, lastX: event.clientX, offset: ui.offset, anchor: timeAt(event),
         edge, move: !edge && ui.selection?.end > ui.selection?.start && region.contains(event.target),
         secondsPerPixel: width() / surface.getBoundingClientRect().width,
         prior: ui.selection ? { ...ui.selection } : null, moved: false };
       surface.setPointerCapture(event.pointerId);
     });
-    surface.addEventListener('pointermove', event => {
-      if (!drag || drag.id !== event.pointerId) return;
-      if (Math.abs(event.clientX - drag.x) > 3) drag.moved = true;
-      if (!drag.moved) return;
-      const value = timeAt(event);
+    function applyDrag(clientX) {
+      const value = timeAt({ clientX });
       if (selectable()) {
         if (drag.edge && drag.prior) {
           const other = drag.edge === 'start' ? drag.prior.end : drag.prior.start;
@@ -265,7 +323,7 @@
             drag.edge === 'end' ? Math.max(value, other) : other, { emit: true });
         } else if (drag.move) {
           const { start, end } = drag.prior;
-          let delta = (event.clientX - drag.x) * drag.secondsPerPixel;
+          let delta = (clientX - drag.x) * drag.secondsPerPixel + ui.offset - drag.offset;
           const step = Number(audio.dataset.frameSeconds || 0);
           // Snap one shared displacement so moving never adds a codec frame.
           if (step > 0) {
@@ -276,9 +334,31 @@
           setSelection(start + delta, end + delta, { emit: true });
         } else setSelection(drag.anchor, value, { emit: true });
       } else { audio.currentTime = value; update(); }
+    }
+    function scrollAtEdge(now) {
+      edgeRaf = null;
+      if (!drag?.moved || !selectable() || ui.zoom === 1) return;
+      const bounds = surface.getBoundingClientRect();
+      const direction = drag.lastX < bounds.left + 16 ? -1 : drag.lastX > bounds.right - 16 ? 1 : 0;
+      if (!direction) { drag.edgeTime = null; return; }
+      const elapsed = drag.edgeTime ? Math.min((now - drag.edgeTime) / 1000, .05) : 1 / 60;
+      drag.edgeTime = now;
+      const before = ui.offset;
+      setOffset(ui.offset + direction * width() * elapsed * .6);
+      if (ui.offset !== before) { applyDrag(drag.lastX); update(); }
+      edgeRaf = requestAnimationFrame(scrollAtEdge);
+    }
+    surface.addEventListener('pointermove', event => {
+      if (!drag || drag.id !== event.pointerId) return;
+      drag.lastX = event.clientX;
+      if (Math.abs(event.clientX - drag.x) > 3) drag.moved = true;
+      if (!drag.moved) return;
+      applyDrag(event.clientX);
+      if (!edgeRaf) edgeRaf = requestAnimationFrame(scrollAtEdge);
     });
     function cancelDrag(event) {
       if (!drag || drag.id !== event.pointerId) return;
+      cancelAnimationFrame(edgeRaf); edgeRaf = null;
       drag = null; surface.classList.remove('moving-region');
       if (surface.hasPointerCapture(event.pointerId)) surface.releasePointerCapture(event.pointerId);
     }
@@ -334,7 +414,8 @@
       }
     }, { rootMargin: '120px' });
     observer.observe(box);
-    ui.observer = observer;
+    const resizeObserver = new ResizeObserver(update); resizeObserver.observe(surface);
+    ui.observer = observer; ui.resizeObserver = resizeObserver;
     ui.update = update; ui.setSelection = setSelection; update();
     if (audio.preload !== 'none') loadWave();
     return ui;
@@ -343,7 +424,7 @@
     enhance(root = document) {
       for (const ui of all) if (!ui.box.isConnected) {
         ui.audio.pause(); cancelAnimationFrame(ui.raf);
-        ui.abort?.abort(); ui.observer.disconnect(); all.delete(ui);
+        ui.abort?.abort(); ui.observer.disconnect(); ui.resizeObserver.disconnect(); all.delete(ui);
       }
       for (const audio of root.querySelectorAll('audio')) enhance(audio);
     },

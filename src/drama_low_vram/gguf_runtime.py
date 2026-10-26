@@ -465,16 +465,13 @@ class GGUFEngine:
             raise ValueError("Invalid seed, frame limit or text chunk size")
         if not 0 <= temperature <= 2 or not 0 < top_p <= 1 or not 0 <= top_k <= 8193:
             raise ValueError("Invalid sampling parameters")
-        # Reserved task delimiters cannot be supplied through ordinary TTS.
-        if any(not re.fullmatch(r"<\|speaker:(?:[0-9]|1[0-5])\|>", token)
-               for token in re.findall(r"<\|[^|\n]*\|>", text)):
-            raise ValueError("Structural task markers are not ordinary speech text")
+        from .protocols import PreviousTake, directed_text, validate_content
+        validate_content(text, "text")
         if task_mode not in ("", "stream", "infill", "design", "joint"):
             raise ValueError("Unknown native task mode")
         if len(references) > 32 or len(previous_takes) > 32:
             raise ValueError("At most 32 references or previous takes are supported")
         if task_mode or direction or language is not None or duration_frames is not None or previous_takes:
-            from .protocols import PreviousTake, directed_text, validate_content
             from .gguf_takes import CODEC_CONFIG, take_descriptor
             validate_content(lookahead, "lookahead", empty=True)
             if task_mode != "stream" and lookahead:

@@ -7,7 +7,7 @@
   const fresh = () => ({
     upload: null, original: '', text: '', direction: '', mode: 'whole', quote: '', replacement: '',
     target: null, range: null, resultJobId: null, workId: crypto.randomUUID(), segmentId: crypto.randomUUID(),
-    parameters: { maximum: '35.67', duration: '', temperature: '1', top_p: '.9', top_k: '0', seed: '123', random: true },
+    parameters: { maximum: '35.67', duration: '', max_chars: '160', temperature: '1', top_p: '.9', top_k: '0', seed: '123', random: true },
   });
   let draft = fresh(), ready = false, hydrating = false, uploading = false, submitting = false;
   let job = null, asrBusy = false, asrStatus = '', failure = '', request = 0, originalRevision = 0;
@@ -264,6 +264,7 @@
     return {
       seed: draft.parameters.random ? crypto.getRandomValues(new Uint32Array(1))[0] : read('seed'),
       max_new_tokens: Math.max(1, Math.round(maximum * 44100 / 2048)),
+      max_chunk_chars: Math.round(read('max_chars')),
       duration_frames: duration ? Math.max(1, Math.round(duration * 44100 / 2048)) : null,
       temperature: read('temperature'), top_p: read('top_p'), top_k: read('top_k'),
     };
@@ -355,6 +356,7 @@
   for (const [key, label, min, max, step] of [
     ['maximum', 'Max duration (seconds)', '.01', '95.109', 'any'],
     ['duration', 'Target duration (seconds)', '.01', '95.109', 'any'],
+    ['max_chars', 'Text chunk target', '80', '320', '1'],
     ['temperature', 'Temperature', '0', '2', 'any'], ['top_p', 'Top P', '0', '1', 'any'],
     ['top_k', 'Top K', '0', '8193', '1'], ['seed', 'Seed', '0', String(2 ** 32 - 1), '1'],
   ]) {

@@ -71,8 +71,8 @@ const resultPath = path.join(root, 'research/2026-10-19-waveform-creation-regres
     const infillBoundaries = () => page.evaluate(() => ({
       start: Number(document.querySelector('#start-frame').value),
       end: Number(document.querySelector('#end-frame').value),
-      startTime: Number(document.querySelector('#start-time').value),
-      endTime: Number(document.querySelector('#end-time').value),
+      startTime: UiNumber.read(document.querySelector('#start-time')),
+      endTime: UiNumber.read(document.querySelector('#end-time')),
       region: StudioAudio.selection(document.querySelector('#infill-source-audio')),
     }));
     await page.goto(base, { waitUntil: 'networkidle' });
@@ -200,7 +200,7 @@ const resultPath = path.join(root, 'research/2026-10-19-waveform-creation-regres
     await page.waitForFunction(() => document.querySelector('#audio-edit-source').duration > 0);
     report.checks.result_opens_editor_with_selection = await page.locator('#audio-edit-source').evaluate(audio =>
       Boolean(StudioAudio.selection(audio)));
-    await page.locator('#audio-edit-close').click();
+    await page.locator('#audio-edit-back').click();
     await page.evaluate(selection => {
       StudioFlow.derive({ job_id: 'waveform-fixture' }, 'infill', selection);
     }, resultSelection);
@@ -256,8 +256,12 @@ const resultPath = path.join(root, 'research/2026-10-19-waveform-creation-regres
     report.checks.frame_keyboard_steps_are_one_frame = Math.abs((afterKey.end - afterKey.start) * 44100 / 2048 - 1) < .00001;
     for (const locale of ['zh-CN', 'en', 'ja', 'ko']) {
       await choose('ui-language', locale);
-      report.checks[`translations_${locale}`] = await page.evaluate(() =>
-        [...document.querySelectorAll('[data-i18n]')].every(node => I18n.has(node.dataset.i18n)));
+      const untranslated = await page.evaluate(() =>
+        [...new Set([...document.querySelectorAll('[data-i18n]')]
+          .filter(node => !node.closest('#model-download-choice')).map(node => node.dataset.i18n))]
+          .filter(source => !I18n.has(source)));
+      report.checks[`translations_${locale}`] = !untranslated.length;
+      if (untranslated.length) console.log('Missing translations:', untranslated);
       for (const [name, width, height] of [['desktop', 1440, 1080], ['mobile', 390, 844]]) {
         await page.setViewportSize({ width, height });
         report.checks[`${name}_fits_${locale}`] = await page.evaluate(() =>

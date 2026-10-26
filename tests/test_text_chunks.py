@@ -55,6 +55,22 @@ def test_directions_and_angle_tags_are_indivisible():
     assert all(chunk.count("<") == chunk.count(">") for chunk in chunks)
 
 
+def test_phoneme_pairs_are_indivisible_when_long_text_is_chunked():
+    text = (
+        "这是前面一段需要正常朗读的文字。"
+        "\u91cd<|phoneme_start|>chong2<|phoneme_end|>"
+        "\u5e86<|phoneme_start|>qing4<|phoneme_end|>"
+        "这里继续后面的说明内容。"
+    )
+    for limit in (3, 8, 15):
+        chunks = split_text(text, limit)
+        assert recover(chunks, text) == text
+        assert all(chunk.count("<|phoneme_start|>") == chunk.count("<|phoneme_end|>")
+                   for chunk in chunks)
+        assert any("<|phoneme_start|>chong2<|phoneme_end|>" in chunk for chunk in chunks)
+        assert any("<|phoneme_start|>qing4<|phoneme_end|>" in chunk for chunk in chunks)
+
+
 def test_nested_brackets_do_not_split():
     text = "[direction [with nested detail]]Hello there. Another sentence."
     chunks = split_text(text, 14)
@@ -134,6 +150,31 @@ def test_closing_quotes_and_ellipsis_stay_with_the_sentence():
     text = 'She said, "Hello!"  Next sentence...  The final sentence.'
     chunks = split_text(text, 25)
     assert chunks[0] == 'She said, "Hello!"  '
+    assert recover(chunks, text) == text
+
+
+def test_sentence_boundary_can_extend_past_the_soft_target():
+    text = "One two. Next line."
+    chunks = split_text(text, 7)
+    assert chunks[0] == "One two. "
+    assert recover(chunks, text) == text
+
+
+def test_paired_scope_and_semicolon_are_natural_boundaries():
+    text = "<whisper>Keep this marked range together.</whisper> A; B; C."
+    chunks = split_text(text, 18)
+    assert any("<whisper>Keep this marked range together.</whisper>" in chunk for chunk in chunks)
+    assert recover(chunks, text) == text
+
+
+def test_tagged_dialogue_limits_distinct_speakers_per_chunk():
+    text = (
+        "<|speaker:0|>A. <|speaker:1|>B. "
+        "<|speaker:2|>C. <|speaker:3|>D."
+    )
+    chunks = split_text(text, 20)
+    assert any("<|speaker:3|>D." in chunk for chunk in chunks)
+    assert all(len(set(re.findall(r"<\|speaker:(\d+)\|>", chunk))) <= 3 for chunk in chunks)
     assert recover(chunks, text) == text
 
 

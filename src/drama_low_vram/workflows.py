@@ -26,6 +26,50 @@ from .text_chunks import split_text
 from .sampling import DEFAULT_TOP_K
 
 
+def _history_variants(previous_takes, first_chunk, latest_chunk):
+    """Keep explicit history, then progressively trim auto-generated history."""
+    base = list(previous_takes)
+    variants = []
+
+    def same(left, right):
+        return (
+            left is right
+            or (left.text == right.text
+                and left.lookahead == right.lookahead
+                and left.codes.shape == right.codes.shape
+                and bool((left.codes == right.codes).all()))
+        )
+
+    def add(items):
+        items = list(items)
+        if not any(len(items) == len(existing)
+                   and all(left is right for left, right in zip(items, existing))
+                   for existing in variants):
+            variants.append(items)
+
+    automatic = []
+    if first_chunk is not None and all(not same(first_chunk, item) for item in base):
+        automatic.append(first_chunk)
+    if (latest_chunk is not None
+            and all(not same(latest_chunk, item) for item in base)
+            and all(not same(latest_chunk, item) for item in automatic)):
+        automatic.append(latest_chunk)
+    add(base + automatic)
+    if (latest_chunk is not None and all(not same(latest_chunk, item) for item in base)):
+        add(base + [latest_chunk])
+    if (first_chunk is not None and all(not same(first_chunk, item) for item in base)):
+        add(base + [first_chunk])
+    add(base)
+    return variants or [[]]
+
+
+def _is_prompt_overflow(error):
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        "prompt", "context", "capacity", "sequence length", "too long", "required_context",
+    ))
+
+
 def save_take(output, text, codes, frames, *, metadata=None):
     """Data-only NumPy sidecar; no Python pickle or additional model bank."""
     output = Path(output)
@@ -214,15 +258,25 @@ class DramaWorkflows:
                     user_text = chunk
                 else:
                     active_history = history
-                    if first_chunk is not None:
-                        active_history = [*previous_takes, first_chunk]
-                        if history[-1] is not first_chunk:
-                            active_history.append(history[-1])
-                    prompt = build_tts_prompt(
-                        chunk, tokenizer, config, transcripts=transcripts, references=reference_codes,
-                        history=active_history, direction=direction, language=language,
-                        duration_frames=duration_frames,
-                    )
+                    prompt_error = None
+                    for candidate in _history_variants(
+                        previous_takes, first_chunk, history[-1] if history else None):
+                        try:
+                            prompt = build_tts_prompt(
+                                chunk, tokenizer, config, transcripts=transcripts,
+                                references=reference_codes, history=candidate,
+                                direction=direction, language=language,
+                                duration_frames=duration_frames,
+                            )
+                        except ValueError as error:
+                            if not _is_prompt_overflow(error):
+                                raise
+                            prompt_error = error
+                            continue
+                        active_history = candidate
+                        break
+                    else:
+                        raise prompt_error or ValueError("No usable generation history")
                     user_text = (
                         directed_text(chunk, direction, language=language, duration_frames=duration_frames)
                         if direction or language is not None or duration_frames is not None else chunk

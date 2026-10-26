@@ -95,7 +95,8 @@ html, body, button, input, textarea, select, h1, h2, h3, strong { letter-spacing
 .script-capsule { box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .script-scope { background: #fff0e2; color: #70452e; border: 1px solid #efd5b9; border-radius: 4px; padding-block: 1px; }
 .script-event { background: #edf3f7; color: #344e64; border: 1px solid #dbe6ec; border-radius: 4px; padding-block: 1px; }
-.script-tag-edge, .script-event { cursor: pointer; }
+.script-phoneme { background: #e8f4f2; color: #245953; border: 1px solid #cce5e0; border-radius: 4px; padding-block: 1px; }
+.script-tag-edge, .script-event, .script-phoneme { cursor: pointer; }
 .script-speaker { background: #edf3f8; color: #3d556e; border: 1px solid #d4e0ea; border-radius: 4px; padding: 2px 7px; font-weight: 600; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .script-speaker[data-speaker="1"] { background: #edf5ef; color: #37624c; border-color: #d3e4d8; }
 .script-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid #e8ebef; background: var(--panel-deep); min-height: 42px; }
@@ -112,6 +113,18 @@ html, body, button, input, textarea, select, h1, h2, h3, strong { letter-spacing
 .tag-search, .tag-scopes, .tag-categories, .tag-custom { flex-shrink: 0; }
 .tag-scopes { padding: 10px 14px 12px; border-bottom: 1px solid var(--line); }
 .tag-scopes > .text-btn { margin-top: 8px; }
+.tag-pronunciation-action { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; }
+.tag-pronunciation-action[hidden] { display: none; }
+.tag-pronunciation-form { display: grid; min-width: 0; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-small); background: #f7faf9; }
+.tag-pronunciation-form[hidden] { display: none; }
+.tag-pronunciation-source { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: 14px; }
+.tag-pronunciation-field { display: grid; gap: 5px; color: var(--muted); font-size: 13px; }
+.tag-pronunciation-field input { min-width: 0; height: 36px; padding: 6px 9px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: #fff; color: var(--text); font: 14px var(--font-ui); }
+.tag-pronunciation-field input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.tag-pronunciation-help, .tag-pronunciation-error { margin: 0; font-size: 12px; line-height: 1.45; }
+.tag-pronunciation-help { color: var(--muted); }
+.tag-pronunciation-error { color: #a83236; }
+.tag-pronunciation-actions { display: flex; align-items: center; gap: 10px; }
 .tag-scopes h3, .tag-choices h3 { font-size: 14px; font-weight: 600; color: #404a56; margin: 0 0 8px; }
 .tag-categories { display: flex; flex-wrap: nowrap; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--panel-deep); overflow-x: auto; overscroll-behavior-x: contain; }
 .tag-categories[hidden] { display: none; }

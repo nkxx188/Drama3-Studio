@@ -608,7 +608,19 @@ input[type="checkbox"] { accent-color: var(--accent); margin-top: 5px; }
 .player-controls button:disabled { opacity: 1; color: var(--disabled); cursor: default; }
 .player-wave-hint { flex-basis: 100%; color: #647186; font-size: 13px; }
 .player-time { margin-top: 3px; }
-.player-pan { width: 100%; height: 12px; accent-color: #bd7b62; }
+.player-wave-timeline { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+.player-controls .icon, .player-preview-selection > span { pointer-events: none; }
+.player-pan { display: block; width: 100%; height: 16px; margin: 4px 0 0; padding: 0; appearance: none; -webkit-appearance: none; border: 0; border-radius: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
+.player-pan::-webkit-slider-runnable-track { height: 5px; border-radius: 3px; background: #e4e8ed; }
+.player-pan::-moz-range-track { height: 5px; border: 0; border-radius: 3px; background: #e4e8ed; }
+.player-pan::-moz-range-progress { background: transparent; }
+.player-pan::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: var(--pan-size, 40px); height: 9px; margin-top: -2px; border: 0; border-radius: 3px; background: #a6b0bd; box-shadow: none; cursor: grab; }
+.player-pan::-moz-range-thumb { width: var(--pan-size, 40px); height: 9px; border: 0; border-radius: 3px; background: #a6b0bd; box-shadow: none; cursor: grab; }
+.player-pan:hover::-webkit-slider-thumb { background: #8d99a8; }
+.player-pan:hover::-moz-range-thumb { background: #8d99a8; }
+.player-pan:active::-webkit-slider-thumb { cursor: grabbing; }
+.player-pan:active::-moz-range-thumb { cursor: grabbing; }
+.player-pan:focus-visible { outline: 2px solid #8d99a8; outline-offset: 2px; border-radius: 3px; }
 .player-error { margin-top: 8px; }
 .reference-wave-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
 .reference-wave-actions .text-btn:disabled { opacity: 1; color: var(--disabled); cursor: default; }

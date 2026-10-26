@@ -33,6 +33,8 @@ END_OF_TURN = "<|endofturn|>"
 FIM_SUFFIX = "<|fim_suffix|>"
 FIM_PREFIX = "<|fim_prefix|>"
 RESERVED_CONTENT = (LINE_SEPARATOR, END_OF_TURN, FIM_SUFFIX, FIM_PREFIX)
+PHONEME_START = "<|phoneme_start|>"
+PHONEME_END = "<|phoneme_end|>"
 
 
 def validate_content(text: str, location: str, *, empty: bool = False) -> None:
@@ -43,9 +45,26 @@ def validate_content(text: str, location: str, *, empty: bool = False) -> None:
     validate_drama3_text(text, location)
     if any(token in text for token in RESERVED_CONTENT):
         raise ValueError(f"{location}: structural task markers belong to the prompt builder")
-    for token in re.findall(r"<\|[^|\n]*\|>", text):
-        if SPEAKER_TAG_PATTERN.fullmatch(token) is None:
+    phoneme_open = None
+    for match in re.finditer(r"<\|[^|\n]*\|>", text):
+        token = match.group()
+        if token == PHONEME_START:
+            if phoneme_open is not None:
+                raise ValueError(f"{location}: phoneme tags cannot be nested")
+            phoneme_open = match.end()
+        elif token == PHONEME_END:
+            if phoneme_open is None:
+                raise ValueError(f"{location}: phoneme end tag has no matching start tag")
+            if not text[phoneme_open:match.start()].strip():
+                raise ValueError(f"{location}: phoneme pronunciation must not be empty")
+            phoneme_open = None
+        elif SPEAKER_TAG_PATTERN.fullmatch(token) is not None:
+            if phoneme_open is not None:
+                raise ValueError(f"{location}: phoneme pronunciation cannot contain control tags")
+        else:
             raise ValueError(f"{location}: special control tokens belong to the prompt builder")
+    if phoneme_open is not None:
+        raise ValueError(f"{location}: phoneme start tag has no matching end tag")
 
 
 def validate_codes(codes: Tensor, config, location="audio", *, empty=False) -> Tensor:

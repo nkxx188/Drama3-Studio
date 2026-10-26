@@ -1,18 +1,27 @@
-"""Lossless request splitting at sentence, clause and word boundaries.
+"""Lossless request splitting at natural boundaries.
 
-``max_chars`` is a soft limit for characters outside control tags, not an audio
-duration estimate. Tags and an indivisible word may make a chunk longer. The
-caller should retain official prompt history for voice continuity.
+``max_chars`` is a soft target for characters outside control tags, not an audio
+duration estimate. A sentence may extend past the target so the model can finish
+it; the splitter falls back to clauses, words, and finally characters when a
+sentence is longer than the soft overflow window.
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from math import ceil
 from dataclasses import dataclass
 
 
 SPEAKER_TAG = re.compile(r"<\|speaker:([0-9]+)\|>")
+PHONEME_START = "<|phoneme_start|>"
+PHONEME_END = "<|phoneme_end|>"
+_PAIRED_TAG = re.compile(
+    r"<(?P<name>whisper|emphasis|soft|fast|slow|stress|forceful)>.*?"
+    r"</(?P=name)>",
+    re.DOTALL,
+)
 _ABBREVIATIONS = {
     "mr.",
     "mrs.",
@@ -31,7 +40,7 @@ _ABBREVIATIONS = {
     "no.",
     "fig.",
 }
-_TERMINATORS = ".!?\u3002\uff01\uff1f\u2026"
+_TERMINATORS = ".!?\u3002\uff01\uff1f\u2026;\n"
 _CLOSERS = "\"')]}>\u201d\u2019\u300d\u300f\u3011\uff09"
 _CLAUSES = ",;:\uff0c\uff1b\uff1a\u3001"
 
@@ -50,6 +59,17 @@ def _units(text: str) -> list[_Unit]:
     while offset < len(text):
         start = offset
         opening = text[offset]
+        if text.startswith(PHONEME_START, offset):
+            end = text.find(PHONEME_END, offset + len(PHONEME_START))
+            if end >= 0:
+                offset = end + len(PHONEME_END)
+                result.append(_Unit(start, offset, text[start:offset], True))
+                continue
+        paired = _PAIRED_TAG.match(text, offset)
+        if paired is not None:
+            offset = paired.end()
+            result.append(_Unit(start, offset, text[start:offset], True))
+            continue
         if opening in "[<":
             closing = "]" if opening == "[" else ">"
             depth = 1
@@ -168,8 +188,44 @@ def _has_leading_speaker(units: list[_Unit], start: int, end: int) -> bool:
     return False
 
 
-def split_text(text: str, max_chars: int = 200) -> list[str]:
-    """Preserve text and tags; inherit the active speaker in every later request.
+def _unit_width(unit: _Unit) -> int:
+    if not unit.protected:
+        return len(unit.value)
+    start = unit.value.find(PHONEME_START)
+    end = unit.value.find(PHONEME_END, start + len(PHONEME_START)) if start >= 0 else -1
+    return end - start - len(PHONEME_START) if end >= 0 else 0
+
+
+def _content_width(text: str) -> int:
+    return sum(_unit_width(unit) for unit in _units(text))
+
+
+def _choose_boundary(
+    preferred: set[int],
+    *,
+    start: int,
+    target_end: int,
+    soft_end: int,
+    cumulative: list[int],
+    minimum_width: int,
+) -> int | None:
+    """Choose a natural boundary, allowing a sentence to finish after target."""
+    within_target = [
+        boundary for boundary in preferred
+        if start < boundary <= target_end
+        and cumulative[boundary] - cumulative[start] >= minimum_width
+    ]
+    if within_target:
+        return max(within_target)
+    after_target = [
+        boundary for boundary in preferred
+        if target_end < boundary <= soft_end
+    ]
+    return min(after_target) if after_target else None
+
+
+def _split_plain_text(text: str, max_chars: int) -> list[str]:
+    """Split text without adding speaker prefixes.
 
     No whitespace or punctuation is stripped. Joining the chunks after removing
     inserted leading speaker tags recovers the original text exactly. Text
@@ -186,34 +242,40 @@ def split_text(text: str, max_chars: int = 200) -> list[str]:
     sentences, clauses, spaces = _boundaries(text, units)
     cumulative = [0]
     for unit in units:
-        cumulative.append(cumulative[-1] + (0 if unit.protected else len(unit.value)))
+        cumulative.append(cumulative[-1] + _unit_width(unit))
     chunks = []
     start = 0
     while start < len(units):
         if cumulative[-1] - cumulative[start] <= max_chars:
             end = len(units)
         else:
-            limit = start
+            target_end = start
             while (
-                limit < len(units)
-                and cumulative[limit + 1] - cumulative[start] <= max_chars
+                target_end < len(units)
+                and cumulative[target_end + 1] - cumulative[start] <= max_chars
             ):
-                limit += 1
+                target_end += 1
             # Control tags have zero counted width; a fallback still makes progress.
-            limit = max(start + 1, limit)
+            target_end = max(start + 1, target_end)
+            soft_budget = max(max_chars + 1, ceil(max_chars * 1.5))
+            soft_end = target_end
+            while (
+                soft_end < len(units)
+                and cumulative[soft_end + 1] - cumulative[start] <= soft_budget
+            ):
+                soft_end += 1
+            soft_end = max(target_end, soft_end)
             end = None
+            minimum_width = max(1, max_chars // 3)
             for preferred in (sentences, clauses, spaces):
-                options = [
-                    boundary
-                    for boundary in preferred
-                    if start < boundary <= limit
-                    and cumulative[boundary] - cumulative[start] >= max_chars // 3
-                ]
-                if options:
-                    end = max(options)
+                end = _choose_boundary(
+                    preferred, start=start, target_end=target_end,
+                    soft_end=soft_end, cumulative=cumulative,
+                    minimum_width=minimum_width)
+                if end is not None:
                     break
             if end is None:
-                end = limit
+                end = target_end
                 while (
                     end < len(units)
                     and _inside_word(units, end)
@@ -241,8 +303,82 @@ def split_text(text: str, max_chars: int = 200) -> list[str]:
                 ):
                     end = tag_start
         chunk = text[units[start].start : units[end - 1].end]
-        if chunks and not _has_leading_speaker(units, start, end):
-            chunk = _speaker_before(units, start) + chunk
         chunks.append(chunk)
         start = end
+    return chunks
+
+
+def _speaker_segments(text: str) -> list[tuple[str, str]]:
+    """Return speaker/body pairs, keeping untagged text as speaker 0."""
+    matches = list(SPEAKER_TAG.finditer(text))
+    if not matches:
+        return []
+    segments = []
+    prefix = text[:matches[0].start()]
+    if prefix and prefix.strip() and not prefix.lstrip().startswith("["):
+        segments.append(("0", prefix))
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body = text[match.end():end]
+        if index == 0 and (not prefix.strip() or prefix.lstrip().startswith("[")):
+            body = prefix + body
+        if body:
+            segments.append((match.group(1), body))
+    return segments
+
+
+def _split_speaker_text(text: str, max_chars: int, max_speakers: int = 3) -> list[str]:
+    """Split tagged dialogue while keeping each chunk to at most three speakers."""
+    if (_content_width(text) <= max_chars
+            and len(set(SPEAKER_TAG.findall(text))) <= max_speakers):
+        return [text]
+    pieces = []
+    for speaker, body in _speaker_segments(text):
+        for piece in _split_plain_text(body, max_chars):
+            if piece:
+                pieces.append((speaker, f"<|speaker:{speaker}|>{piece}"))
+    if not pieces:
+        return _split_plain_text(text, max_chars)
+    chunks, batch, speakers, width = [], [], set(), 0
+    for speaker, piece in pieces:
+        piece_width = _content_width(piece)
+        new_speaker = speaker not in speakers
+        too_many_speakers = new_speaker and len(speakers) >= max_speakers
+        too_long = bool(batch) and width + piece_width > max_chars
+        if too_many_speakers or too_long:
+            chunks.append("".join(batch))
+            batch, speakers, width = [], set(), 0
+            new_speaker = True
+        batch.append(piece)
+        speakers.add(speaker)
+        width += piece_width
+    if batch:
+        chunks.append("".join(batch))
+    return chunks
+
+
+def split_text(text: str, max_chars: int = 200, *, max_speakers: int = 3) -> list[str]:
+    """Split text and tagged dialogue without breaking natural control units.
+
+    Later chunks receive an inherited speaker tag when needed. Those inserted
+    prefixes are not part of the original transcript and are intentionally
+    removed when saved full text is reconstructed.
+    """
+    if not isinstance(text, str):
+        raise TypeError("text must be a string")
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or max_chars < 1:
+        raise ValueError("max_chars must be a positive integer")
+    if (isinstance(max_speakers, bool) or not isinstance(max_speakers, int)
+            or max_speakers < 1):
+        raise ValueError("max_speakers must be a positive integer")
+    if not text:
+        return []
+    if SPEAKER_TAG.search(text):
+        return _split_speaker_text(text, max_chars, max_speakers)
+    chunks = _split_plain_text(text, max_chars)
+    if len(chunks) > 1:
+        chunks = [
+            chunk if index == 0 else "<|speaker:0|>" + chunk
+            for index, chunk in enumerate(chunks)
+        ]
     return chunks

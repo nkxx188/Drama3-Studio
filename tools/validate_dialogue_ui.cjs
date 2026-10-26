@@ -145,6 +145,19 @@ const report = { scope: 'Unified multi-speaker editor, voice switching, parsing,
     await host().locator('[data-label="Source text"]').click();
     check('typed_ascii_fullwidth_and_lowercase_labels_are_recognized', await host().locator('.script-speaker').count() === 4
       && await page.evaluate(() => StudioFlow.flow.scene.lines.length === 4));
+    await editor().fill('S1：重庆到了。\nS2：你听见了吗？');
+    await page.evaluate(() => {
+      const view = ScriptEditor.get(document.getElementById('dialogue-script')).view;
+      view.focus(); view.dispatch({ selection: { anchor: 3, head: 4 } });
+    });
+    await host().locator('[data-label="Tags"]').click();
+    await host().locator('[data-action="phoneme"]').click();
+    await host().locator('.tag-pronunciation-form input').fill('chong2');
+    await host().locator('.tag-pronunciation-form button[type="submit"]').click();
+    check('pronunciation_quick_action_keeps_dialogue_speaker_and_other_hanzi',
+      await page.inputValue('#dialogue-script') ===
+        'S1：<|phoneme_start|>chong2<|phoneme_end|>庆到了。\nS2：你听见了吗？');
+    await host().locator('[data-label="Undo"]').click();
     await editor().fill('S1：选中这几个字。\nS2：第二句。');
     await page.evaluate(() => {
       const view = ScriptEditor.get(document.getElementById('dialogue-script')).view;
@@ -213,7 +226,9 @@ const report = { scope: 'Unified multi-speaker editor, voice switching, parsing,
     await openVoice(0);
     check('voice_picker_preview_matches_the_speaker_play_button',
       JSON.stringify(await playStyle(page.locator('.dialogue-voice-preview').first())) === JSON.stringify(standardPlayStyle));
-    check('used_speaker_cannot_be_deleted_in_voice_dialog', await page.locator('#dialogue-voice-dialog .studio-dialog-footer .icon-btn').isDisabled());
+    check('voice_dialog_keeps_speaker_removal_on_speaker_cards',
+      await page.locator('#dialogue-voice-apply').isVisible()
+      && !await page.locator('#dialogue-voice-dialog .studio-dialog-footer .icon-btn').count());
     await page.locator('#dialogue-voice-search').fill('参考音频的台词');
     check('voice_picker_search_also_matches_saved_transcripts', await page.locator('.dialogue-voice-option').count() >= 2);
     await page.locator('#dialogue-voice-search').fill(voices[1].name);

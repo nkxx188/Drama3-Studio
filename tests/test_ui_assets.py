@@ -150,6 +150,30 @@ def test_unified_editor_contains_full_scope_without_composer_jumps():
     assert "['continue', 'Continue audio']" not in editor
 
 
+def test_generation_settings_expose_soft_text_chunk_target():
+    studio = (ROOT / "ui/studio.js").read_text(encoding="utf-8")
+    assert "['max-chars', 'Text chunk target'" in studio
+    assert "max_chunk_chars: Math.round" in studio
+
+
+def test_language_hint_is_internal_not_a_visible_generation_control():
+    studio = (ROOT / "ui/studio.js").read_text(encoding="utf-8")
+    assert "performance.append(direction);" in studio
+    assert "internal.append(label, context, language, $('infill-source-location'));" in studio
+    assert "performance.append(direction, language)" not in studio
+    assert "$('advanced-settings').querySelector('.advanced-content').prepend($('language').parentElement);" not in studio
+
+
+def test_pronunciation_uses_a_separate_insert_action():
+    editor = (ROOT / "ui/editor-source/editor.js").read_text(encoding="utf-8")
+    i18n = (ROOT / "ui/i18n.js").read_text(encoding="utf-8")
+    assert "Insert pronunciation" in editor
+    assert "pronunciationButton.after(pronunciationForm)" in editor
+    assert "Insert tag" in editor
+    assert "['Insert pronunciation'" in i18n
+    assert "['Insert tag'" in i18n
+
+
 def test_tag_palette_preserves_first_open_selection_and_has_no_recent_section():
     editor = (ROOT / "ui/editor-source/editor.js").read_text(encoding="utf-8")
     assert "view.dom.ownerDocument.getSelection()" in editor
@@ -163,6 +187,12 @@ def test_tag_palette_is_categorized_localized_and_keyboard_accessible():
     assert "./tag-catalog.js" in editor
     assert "window.I18n.translations(caption)" in editor
     assert "window.I18n.locale === 'en' ? value : t(caption)" in editor
+    assert "Control pronunciation" in editor and "script-phoneme" in editor
+    assert "Pinyin for selected Chinese characters" in editor
+    assert "const chineseUI = /^zh(?:-|$)/i.test(window.I18n.locale);" in editor
+    assert "function crossesDialogueTurn(from, to)" in editor
+    assert "!panel.contains(event.target) && !tags.contains(event.target)" in editor
+    assert "Control pronunciation" in (ROOT / "ui/i18n.js").read_text(encoding="utf-8")
     assert "navigation.setAttribute('role', 'tablist')" in editor
     assert "ArrowLeft" in editor and "ArrowRight" in editor
     assert "No matching tags" in editor
@@ -402,6 +432,33 @@ def test_web_ui_rounds_display_to_two_decimals_without_rounding_request_state():
     assert "toFixed(3)" not in JS + player + studio
     assert "String(Number(Number(value).toFixed(2)))" in JS
     assert "return previous && previous.display === input.value ? String(previous.raw ?? '') : input.value;" in JS
+
+
+def test_editor_waveforms_have_an_initial_time_window_without_changing_normal_players():
+    player = (ROOT / "ui/player.js").read_text(encoding="utf-8")
+    editor = (ROOT / "ui/audio-editor.js").read_text(encoding="utf-8")
+    assert 'data-wave-window="15"' in HTML
+    assert HTML.count('data-wave-window="15"') == 1
+    assert "audio.dataset.waveWindow = '15'" in editor
+    assert "Number(audio.dataset.waveWindow)" in player
+    assert "Math.max(8, audio.duration)" in player
+    assert "ui.viewReady" in player
+    assert "player-wave-timeline" in player
+
+
+def test_player_animation_preserves_click_targets_and_selection_preview_can_pause():
+    player = (ROOT / "ui/player.js").read_text(encoding="utf-8")
+    update = player[player.index("function update()"):player.index("async function startPlayback(")]
+    assert ".innerHTML" not in update
+    assert "setIcon(play, audio.paused ? 'play' : 'pause')" in update
+    assert "if (!audio.paused && ui.stopAt !== null) { audio.pause(); return; }" in player
+    assert "if (!resume) audio.currentTime = ui.selection.start" in player
+    assert "ui.followPlayback = false; setOffset(Number(pan.value))" in player
+    assert "function revealPlayhead()" in player
+    assert ".player-pan::-webkit-slider-thumb" in CSS
+    assert "--pan-size" in CSS
+    assert ".player-pan::-moz-range-thumb" in CSS
+    assert "accent-color: #bd7b62" not in CSS
 
 
 def test_audio_edit_uses_a_dedicated_view_and_keeps_its_own_result():

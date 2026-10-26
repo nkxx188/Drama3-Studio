@@ -143,7 +143,7 @@ def test_draft_persists_text_reference_and_scene_state_separately(tmp_path):
         store.save_draft("single", {"invalid": float("nan")})
 
 
-def test_joint_dialogue_passes_all_references_and_complete_script_in_one_call(tmp_path):
+def test_joint_dialogue_batches_complete_lines_with_all_references(tmp_path):
     engine = Native()
     session = SceneSession(
         engine, tmp_path / "joint.wav", scene="A room.",
@@ -153,11 +153,14 @@ def test_joint_dialogue_passes_all_references_and_complete_script_in_one_call(tm
         strategy="joint", max_chunk_chars=6)
     assert list(session.run()) == []
     assert session.report["strategy"] == "joint" and session.report["take_file"]
-    assert len(engine.calls) == 1
-    text, options = engine.calls[0]
-    assert text.count("<|speaker:0|>") == 2 and "<|speaker:1|> Hi." in text
-    assert len(options["references"]) == 2 and options["task_mode"] == "joint"
-    assert session.report["segments"] == [] and not session.report["native_audio_separators_used"]
+    assert len(engine.calls) == 3
+    assert all(len(options["references"]) == 2 and options["task_mode"] == "joint"
+               for _text, options in engine.calls)
+    assert engine.calls[0][0].count("<|speaker:0|>") == 1
+    assert engine.calls[1][0] == "<|speaker:1|> Hi."
+    assert engine.calls[2][0] == "<|speaker:0|> Again."
+    assert session.report["segments"] == [] and session.report["chunks"]
+    assert not session.report["native_audio_separators_used"]
 
 
 def test_design_uses_character_system_not_spoken_description(tmp_path):

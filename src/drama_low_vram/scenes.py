@@ -11,12 +11,14 @@ import json
 from pathlib import Path
 import time
 
+import torch
+
 from .codec import concatenate_wavs
 from .protocols import (
     PreviousTake, SPEAKER_TAG_PATTERN, UNICODE_WHITE_SPACE,
     validate_content, validate_scene_inputs,
 )
-from .workflows import DramaWorkflows, load_take
+from .workflows import DramaWorkflows, load_take, save_take
 from .sampling import DEFAULT_TOP_K
 
 
@@ -58,6 +60,29 @@ class SceneSession:
             self.sampling["top_p"] = top_p
         self.status, self.results, self.report, self._started = "waiting", [], None, False
 
+    def _joint_batches(self, by_name):
+        """Group complete dialogue lines, keeping no more than three speakers."""
+        batches, current, speakers, width = [], [], set(), 0
+        for line in self.lines:
+            character = by_name[line.character]
+            text = line.text
+            if SPEAKER_TAG_PATTERN.match(text.lstrip(UNICODE_WHITE_SPACE)) is None:
+                text = f"<|speaker:{character.speaker}|> {text}"
+            line_width = len(line.text)
+            new_speaker = character.speaker not in speakers
+            if current and (
+                width + line_width > self.max_chunk_chars
+                or new_speaker and len(speakers) >= 3
+            ):
+                batches.append(current)
+                current, speakers, width = [], set(), 0
+            current.append((character.speaker, text))
+            speakers.add(character.speaker)
+            width += line_width
+        if current:
+            batches.append(current)
+        return batches
+
     def run(self, *, progress=None, cancelled=None):
         if self._started:
             raise RuntimeError("A scene session can only run once")
@@ -77,30 +102,98 @@ class SceneSession:
                     workflows = DramaWorkflows(self.engine)
                 self.status = "generating"
                 if self.strategy == "joint":
-                    texts = []
-                    for line in self.lines:
-                        speaker = by_name[line.character].speaker
-                        text = line.text
-                        if SPEAKER_TAG_PATTERN.match(text.lstrip(UNICODE_WHITE_SPACE)) is None:
-                            text = f"<|speaker:{speaker}|> {text}"
-                        texts.append(text)
+                    batches = self._joint_batches(by_name)
                     note = f"Scene: {self.scene}\nCharacters:\n" + "\n".join(
                         f"Speaker {role.speaker}: {role.description}" for role in self.characters)
                     if self.direction:
                         note += "\n" + self.direction
-                    result = workflows.run(
-                        "tts", "\n".join(texts), self.output, references=self.references,
-                        direction=note, seed=self.seed, max_new_tokens=self.maximum,
-                        single_chunk=True, progress=progress, cancelled=cancelled, **self.sampling)
-                    self.status = result["status"]
+                    directory = self.output.with_name(self.output.stem + ".joint")
+                    directory.mkdir(exist_ok=True)
+                    outputs, takes, frames, history, batch_reports = [], [], [], [], []
+                    joint_samples = 0
+                    full_text = "\n".join(text for batch in batches for _speaker, text in batch)
+                    for batch_index, batch in enumerate(batches):
+                        if cancelled and cancelled():
+                            self.status = "cancelled"
+                            break
+                        batch_text = "\n".join(text for _speaker, text in batch)
+
+                        def batch_progress(event):
+                            if progress:
+                                progress({
+                                    **event, "chunk": batch_index + 1, "chunks": len(batches),
+                                })
+
+                        result = workflows.run(
+                            "tts", batch_text,
+                            directory / f"joint-{batch_index + 1:05d}.wav",
+                            references=self.references, previous_takes=history,
+                            direction=note, seed=(self.seed + batch_index) % 2**64,
+                            max_new_tokens=self.maximum, max_chunk_chars=self.max_chunk_chars,
+                            single_chunk=True, progress=batch_progress, cancelled=cancelled,
+                            **self.sampling)
+                        if result["status"] != "complete":
+                            self.status = result["status"]
+                            break
+                        if getattr(self.engine, "is_gguf", False):
+                            take, _, _ = workflows.load_take(result["take_file"])
+                        else:
+                            take, _, native_frames = load_take(
+                                result["take_file"], self.engine.model.config)
+                            frames.append(native_frames)
+                        outputs.append(result["output"])
+                        takes.append(take)
+                        joint_samples += result.get("audio", {}).get("samples", 0)
+                        batch_reports.extend(result.get("chunks", []))
+                        history = [takes[0], take] if takes[0] is not take else [take]
+                    else:
+                        if cancelled and cancelled():
+                            self.status = "cancelled"
+                        else:
+                            concatenate_wavs(outputs, self.output)
+                            codes = torch.cat([take.codes for take in takes], dim=1)
+                            metadata = {
+                                "mode": "scene", "scene_strategy": "joint",
+                                "scene": self.scene, "spoken_text": full_text,
+                                "direction": self.direction, "complete": True,
+                                "chunks": batch_reports,
+                            }
+                            if getattr(self.engine, "is_gguf", False):
+                                from .gguf_takes import save_native_take
+                                take_file = save_native_take(
+                                    self.output, PreviousTake(full_text, codes),
+                                    metadata=metadata, chunks=takes)
+                            else:
+                                take_file = save_take(
+                                    self.output, full_text, codes, torch.cat(frames),
+                                    metadata=metadata)
+                            self.status = "complete"
+                            self.report = {
+                                "status": self.status, "strategy": "joint",
+                                "native_audio_separators_used": False,
+                                "output": str(self.output), "take_file": str(take_file),
+                                "scene": self.scene,
+                                "characters": [asdict(role) for role in self.characters],
+                                "script": [asdict(line) for line in self.lines],
+                                "direction": self.direction, "segments": [],
+                                "chunks": batch_reports,
+                                "samples": joint_samples,
+                            }
+                            position = joint_samples
+                            self.report["sample_rate"] = 44100
+                            self.report["duration_seconds"] = position / 44100
+                            self.report["total_seconds"] = time.perf_counter() - started
+                    if self.status == "complete":
+                        return
                     self.report = {
-                        **result, "strategy": "joint", "native_audio_separators_used": False,
-                        "scene": self.scene, "characters": [asdict(role) for role in self.characters],
+                        "status": self.status, "strategy": "joint",
+                        "native_audio_separators_used": False,
+                        "output": None, "take_file": None,
+                        "scene": self.scene,
+                        "characters": [asdict(role) for role in self.characters],
                         "script": [asdict(line) for line in self.lines],
                         "direction": self.direction, "segments": [],
                     }
-                    if result.get("audio"):
-                        position = result["audio"]["samples"]
                     return
                 for index, line in enumerate(self.lines):
                     if cancelled and cancelled():

@@ -175,7 +175,7 @@
                 </label>
                 <div id="audio-import-preview" class="hidden">
                   <div class="audio-import-file-heading"><strong id="audio-import-filename"></strong><button id="audio-import-remove" class="text-btn" type="button" data-i18n="Remove audio">Remove audio</button></div>
-                  <audio id="audio-import-player" controls preload="metadata" data-frame-seconds="0.046439909297052155" data-selection-required="true"></audio>
+                  <audio id="audio-import-player" controls preload="metadata" data-wave-window="15" data-frame-seconds="0.046439909297052155" data-selection-required="true"></audio>
                 </div>
                 <p id="audio-import-asr-status" class="field-help" role="status" aria-live="polite"></p>
                 <details id="audio-import-original" class="audio-import-original">
@@ -189,7 +189,7 @@
                 <button class="audio-edit-tab" type="button" role="tab" data-import-mode="whole" aria-selected="true" data-i18n="Whole audio">Whole audio</button>
               </div>
               <section id="audio-import-local" class="audio-edit-local-fields" hidden>
-                <div class="audio-edit-range-actions"><button id="audio-import-insert" class="text-btn" type="button" data-i18n="Insert at playhead">Insert at playhead</button><details class="audio-edit-exact"><summary data-i18n="Exact selection">Exact selection</summary><div class="field-grid"><label class="field-label"><span data-i18n="Start (seconds)">Start (seconds)</span><input id="audio-import-start" class="input" type="number" min="0" step="any"></label><label class="field-label"><span data-i18n="End (seconds)">End (seconds)</span><input id="audio-import-end" class="input" type="number" min="0" step="any"></label></div></details></div>
+                <div class="audio-edit-range-actions"><button id="audio-import-insert" class="text-btn" type="button" data-i18n="Insert at playhead">Insert at playhead</button><details class="audio-edit-exact"><summary data-i18n="Exact selection">Exact selection</summary><div class="field-grid"><label class="field-label"><span data-i18n="Start seconds">Start seconds</span><input id="audio-import-start" class="input" type="number" min="0" step="any"></label><label class="field-label"><span data-i18n="End seconds">End seconds</span><input id="audio-import-end" class="input" type="number" min="0" step="any"></label></div></details></div>
                 <label class="field-label" for="audio-import-quote" data-i18n="Original words in selection">Original words in selection</label><textarea id="audio-import-quote" class="compact-input" rows="2"></textarea>
                 <div id="audio-import-matches" class="audio-edit-matches"></div>
                 <div class="audio-edit-replacement"><label class="field-label" for="audio-import-replacement" data-i18n="Replacement words">Replacement words</label><textarea id="audio-import-replacement" class="compact-input" rows="3"></textarea></div>

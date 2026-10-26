@@ -18,7 +18,8 @@ from fish_speech.models.text2semantic.fish_omni.generate import build_drama3_pro
 class Tokenizer:
     def __init__(self):
         self.special = {"<|im_end|>": 3, FIM_PREFIX: 90, FIM_SUFFIX: 91,
-                        LINE_SEPARATOR: 92, END_OF_TURN: 93}
+                        LINE_SEPARATOR: 92, END_OF_TURN: 93,
+                        "<|phoneme_start|>": 94, "<|phoneme_end|>": 95}
         self.special.update({f"<|semantic:{index}|>": 100 + index for index in range(8)})
 
     def token_to_id(self, text):
@@ -157,6 +158,19 @@ def test_reference_speakers_and_free_directions_are_preserved():
     assert "[language: en]" in target and "[audio tokens: 21]" in target
 
 
+def test_chinese_phoneme_tags_are_valid_prompt_tokens(layout):
+    tokenizer, config = layout
+    text = (
+        "请读作<|phoneme_start|>chong2<|phoneme_end|>"
+        "<|phoneme_start|>qing4<|phoneme_end|>。"
+    )
+    validate_content(text, "text")
+    prompt = build_tts_prompt(text, tokenizer, config)
+    token_ids = prompt[:, 0].tolist()
+    assert token_ids.count(tokenizer.token_to_id("<|phoneme_start|>")) == 2
+    assert token_ids.count(tokenizer.token_to_id("<|phoneme_end|>")) == 2
+
+
 def test_stream_reference_blocks_keep_all_codes_and_global_speaker_tags(layout):
     tokenizer, config = layout
     first, second = codes(3), codes(4)
@@ -177,6 +191,18 @@ def test_stream_reference_blocks_keep_all_codes_and_global_speaker_tags(layout):
 def test_user_content_cannot_inject_task_structure(token):
     with pytest.raises((ValueError, RuntimeError)):
         validate_content(f"Hello {token} world", "text")
+
+
+@pytest.mark.parametrize("text", [
+    "读作<|phoneme_start|>chong2。",
+    "读作<|phoneme_end|>chong2。",
+    "读作<|phoneme_start|><|phoneme_end|>。",
+    "读作<|phoneme_start|>chong2<|phoneme_start|>qing4<|phoneme_end|><|phoneme_end|>。",
+    "读作<|phoneme_start|><|speaker:1|>qing4<|phoneme_end|>。",
+])
+def test_invalid_phoneme_tags_are_rejected(text):
+    with pytest.raises(ValueError, match="phoneme"):
+        validate_content(text, "text")
 
 
 def test_invalid_scene_and_infill_fail_before_model_work(layout):
