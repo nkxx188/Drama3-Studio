@@ -30,6 +30,18 @@
 
 输出为 `dist/Drama3 Windows NVIDIA.zip` 和 `.zip.sha256`。该命令保留现有包目录中的模型和用户数据，创建的发布 ZIP 会排除这些内容。
 
+需要随包分发本地转写模型时，先将完整的 `Qwen3-ASR-0.6B-hf`、
+原始模型卡 `README.md` 和 Apache-2.0 `LICENSE` 放入包目录下的
+`checkpoints/Qwen3-ASR-0.6B-hf`，再显式启用：
+
+```powershell
+.\.venv\Scripts\python.exe tools\package_windows.py --refresh-app --zip --include-asr
+```
+
+这个选项仅加入指定 ASR 文件，不包含 Q4、其他语音生成权重或下载缓存，
+也不会删除本地目录中已有的模型。带 ASR 的 ZIP 验收时使用同一个
+`--include-asr` 选项。
+
 GitHub 每个 Release 附件需小于 2 GiB。完整 ZIP 较大时，生成每份最多 1900 MiB 的分卷：
 
 ```powershell

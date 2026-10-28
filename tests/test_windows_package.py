@@ -1,8 +1,11 @@
 """Archive user-data exclusions must not remove dependency modules."""
 
 import importlib.util
+import json
 from pathlib import Path
 import zipfile
+
+import pytest
 
 
 def test_archive_omits_top_level_user_data_but_keeps_dependency_diagnostics(tmp_path):
@@ -48,6 +51,50 @@ def test_archive_does_not_follow_application_links_to_external_files(tmp_path):
         pytest.skip("Creating symbolic links requires Windows Developer Mode or equivalent privileges")
     (folder / "ui/index.html").write_text("application", encoding="utf-8")
     assert list(module.archive_files(folder)) == [folder / "ui/index.html"]
+
+
+def test_asr_archive_includes_only_explicit_model_files_and_not_speech_weights(tmp_path):
+    source = Path(__file__).resolve().parents[1] / "tools/package_windows.py"
+    spec = importlib.util.spec_from_file_location("asr_windows_package", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    folder = tmp_path / "Portable"
+    model = folder / module.ASR_DIRECTORY
+    model.mkdir(parents=True)
+    for name in (*module.ASR_FILES, *module.ASR_NOTICES):
+        (model / name).write_bytes(b"fixture")
+    for name in ("checkpoints/drama-3-gguf-q4/model.gguf", "checkpoints/other/model.safetensors",
+                 "checkpoints/Qwen3-ASR-0.6B-hf/.cache/token", "ui_data/private.wav"):
+        path = folder / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"private")
+    manifest = folder / "package.json"
+    manifest.write_text('{"model_weights_included": false}', encoding="utf-8")
+    module.write_archive(folder, include_asr=True)
+    with zipfile.ZipFile(folder.with_suffix(".zip")) as archive:
+        assert set(archive.namelist()) == {
+            "Portable/package.json",
+            *(f"Portable/{module.ASR_DIRECTORY.as_posix()}/{name}"
+              for name in (*module.ASR_FILES, *module.ASR_NOTICES)),
+        }
+        bundled = json.loads(archive.read("Portable/package.json"))
+        assert bundled["model_weights_included"] is True
+        assert bundled["tts_model_weights_included"] is False
+        assert bundled["asr_model"]["id"] == "Qwen/Qwen3-ASR-0.6B-hf"
+    assert json.loads(manifest.read_text()) == {"model_weights_included": False}
+    assert (folder / "checkpoints/drama-3-gguf-q4/model.gguf").read_bytes() == b"private"
+
+
+def test_asr_archive_rejects_incomplete_checkpoint_before_creating_zip(tmp_path):
+    source = Path(__file__).resolve().parents[1] / "tools/package_windows.py"
+    spec = importlib.util.spec_from_file_location("incomplete_asr_package", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    folder = tmp_path / "Portable"
+    (folder / module.ASR_DIRECTORY).mkdir(parents=True)
+    with pytest.raises(ValueError, match="ASR checkpoint is incomplete"):
+        module.write_archive(folder, include_asr=True)
+    assert not folder.with_suffix(".zip").exists()
 
 
 def test_archive_omits_torch_link_libraries_and_keeps_runtime_and_python_jit_inputs(tmp_path):
@@ -113,7 +160,7 @@ def test_refresh_retires_extra_launchers_preserves_data_and_copies_current_app(t
     for name in module.RETIRED_UI_ASSETS:
         assert not (package / name).exists()
     assert (package / "runtime/native/worker.exe").read_text() == "current worker"
-    assert "Download a supported model from Studio Settings" in (
+    assert "Download a supported speech model from Studio Settings" in (
         package / "START-HERE.txt").read_text(encoding="utf-8")
     for name in ("README.md", "README.zh-CN.md", "docs/development.md", "docs/release-preparation.md",
                  "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):

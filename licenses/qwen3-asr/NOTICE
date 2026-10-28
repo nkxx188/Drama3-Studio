@@ -1,0 +1,11 @@
+Qwen3-ASR-0.6B-hf
+Copyright 2026 Alibaba Cloud
+
+Source: https://huggingface.co/Qwen/Qwen3-ASR-0.6B-hf
+Pinned revision: 7f1569a48a89f3e3f4dc3a5c9d28bddd903bc76c
+License: Apache License, Version 2.0 (see LICENSE).
+
+ASR-enabled Drama 3 Studio packages redistribute the native Transformers
+checkpoint for local transcription. The bundled tensor file matches the
+upstream checkpoint; the original model card is included with the checkpoint.
+This model is separate from the Drama 3 speech generation models.

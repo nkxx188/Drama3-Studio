@@ -11,6 +11,7 @@ by the author. It does not relicense the following components or adapted files.
 | Bilibili site favicon | <https://www.bilibili.com/> | Official favicon used only to identify the Bilibili link; rights to its mark remain with Bilibili. |
 | CodeMirror and editor dependencies | <https://codemirror.net/> | [Per-package license files](ui/licenses/) |
 | Lucide | <https://lucide.dev/> | [License](ui/licenses/lucide.txt) |
+| Qwen3-ASR-0.6B-hf (included in ASR-enabled portable releases) | <https://huggingface.co/Qwen/Qwen3-ASR-0.6B-hf> | [Apache-2.0](licenses/qwen3-asr/LICENSE) |
 
 `src/drama_low_vram/codec.py` adapts code from Fish Speech's
 `fish_speech/models/text2semantic/inference.py` and remains under the Fish Audio
@@ -32,7 +33,9 @@ retain their own license files; the native runtime retains upstream notices
 under `runtime/native/licenses/`. The package manifest records the bundled
 dependency versions.
 
-The full model weights are downloaded separately. The package includes only a
+Drama 3 speech generation weights are downloaded separately. ASR-enabled releases
+also include Qwen3-ASR-0.6B-hf for local transcription under Apache-2.0; its
+original model card and license accompany the checkpoint. The package includes a
 4 KiB Drama 3 `<|audio_separator|>` output row under the Fish Audio Community
 License, documented in [NOTICE](NOTICE). Consult the license supplied with each
 model; source-code notices do not grant additional rights to model weights,

@@ -17,6 +17,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--folder", type=Path, default=ROOT / "dist/Drama3 Windows NVIDIA")
     parser.add_argument("--extract-to", type=Path, default=ROOT / "dist/archive-check")
+    parser.add_argument("--include-asr", action="store_true")
     args = parser.parse_args()
     folder, extracted = args.folder.resolve(), args.extract_to.resolve()
     if not extracted.is_relative_to(ROOT / "dist") or extracted.exists():
@@ -28,7 +29,8 @@ def main():
     assert archive_path.with_suffix(".zip.sha256").read_text().strip() == digest
     with zipfile.ZipFile(archive_path) as archive:
         names = set(archive.namelist())
-        expected = {file.relative_to(folder.parent).as_posix() for file in archive_files(folder)}
+        expected = {file.relative_to(folder.parent).as_posix()
+                    for file in archive_files(folder, include_asr=args.include_asr)}
         assert names == expected, (sorted(expected - names)[:10], sorted(names - expected)[:10])
         extracted.mkdir(parents=True)
         for member in archive.infolist():

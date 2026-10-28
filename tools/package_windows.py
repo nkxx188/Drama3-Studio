@@ -1,8 +1,8 @@
 """Assemble a self-contained Windows folder from the working pinned environment.
 
-No model payloads, user data, build toolchains, virtualenv paths or research
-outputs are copied. Python is based on the redistributable standalone runtime,
-with installed distribution records copied through their dependency closure.
+Speech model payloads, user data, build toolchains, virtualenv paths and research
+outputs are excluded. An explicit archive option includes only the local ASR
+checkpoint. Python distributions are copied through their dependency closure.
 """
 
 from __future__ import annotations
@@ -31,6 +31,12 @@ PACKAGE_FILES = frozenset((
     "start.bat", "requirements-windows.txt", "START-HERE.txt", "package.json",
     "README.md", "README.zh-CN.md", "NOTICE", "THIRD_PARTY_NOTICES.md", "LICENSE", "LICENSE.txt",
 ))
+ASR_DIRECTORY = Path("checkpoints/Qwen3-ASR-0.6B-hf")
+ASR_FILES = (
+    "config.json", "generation_config.json", "processor_config.json",
+    "tokenizer.json", "tokenizer_config.json", "chat_template.jinja", "model.safetensors",
+)
+ASR_NOTICES = ("README.md", "LICENSE")
 
 
 def copy_changed(source, destination):
@@ -94,7 +100,9 @@ def refresh_application(destination):
         "No separate Python, CUDA Toolkit, WSL or Visual Studio installation is required.\n"
         "A compatible NVIDIA driver and an x64/AVX2 CPU are required. "
         "RTX20/30/40/50 code targets are included; physical validation is on RTX4070 Laptop.\n\n"
-        "Model weights are separate. Download a supported model from Studio Settings, or place "
+        "Speech generation model weights are separate. Some releases include the local ASR "
+        "transcription model; check the release notes. Download a supported speech model from "
+        "Studio Settings, or place "
         "model files under this folder's checkpoints directory and select them in Studio. You "
         "can also add another model folder from Settings. Formats and precision remain your choice.\n"
         "Cache, outputs, settings and logs stay in this folder. User audio and settings are preserved "
@@ -156,9 +164,21 @@ def copy_distribution(distribution, target):
             shutil.copy2(original, destination)
 
 
-def archive_files(destination):
-    """Only release application files, without traversing user model locations."""
+def archive_files(destination, *, include_asr=False):
+    """Allow application files and, explicitly, one complete ASR checkpoint."""
     destination = Path(destination).resolve()
+    asr_files = []
+    if include_asr:
+        model = destination / ASR_DIRECTORY
+        for directory in (destination / "checkpoints", model):
+            if directory.is_symlink() or directory.is_junction():
+                raise ValueError("The bundled ASR checkpoint must not be a linked directory")
+        for name in (*ASR_FILES, *ASR_NOTICES):
+            file = model / name
+            if (not file.is_file() or file.is_symlink()
+                    or not file.resolve().is_relative_to(destination)):
+                raise ValueError(f"The bundled ASR checkpoint is incomplete or linked: {name}")
+            asr_files.append(file)
     for folder, directories, filenames in os.walk(destination, followlinks=False):
         folder = Path(folder)
         directories[:] = sorted(
@@ -180,13 +200,24 @@ def archive_files(destination):
                     or not file.resolve().is_relative_to(destination)):
                 continue
             yield file
+    yield from asr_files
 
 
-def write_archive(destination):
+def write_archive(destination, *, include_asr=False):
+    files = list(archive_files(destination, include_asr=include_asr))
     archive_path = destination.with_suffix(".zip")
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
-        for file in archive_files(destination):
-            archive.write(file, file.relative_to(destination.parent))
+        for file in files:
+            relative = file.relative_to(destination.parent)
+            if include_asr and file == destination / "package.json":
+                manifest = json.loads(file.read_text(encoding="utf-8"))
+                manifest.update(
+                    model_weights_included=True, tts_model_weights_included=False,
+                    asr_model={"id": "Qwen/Qwen3-ASR-0.6B-hf",
+                               "directory": ASR_DIRECTORY.as_posix(), "license": "Apache-2.0"})
+                archive.writestr(relative.as_posix(), json.dumps(manifest, indent=2) + "\n")
+            else:
+                archive.write(file, relative)
     with archive_path.open("rb") as file:
         digest = hashlib.file_digest(file, "sha256").hexdigest()
     archive_path.with_suffix(".zip.sha256").write_text(digest + "\n", encoding="ascii")
@@ -201,14 +232,18 @@ def main():
                         help="Update code, UI, launcher and native runtime in an existing package")
     parser.add_argument("--zip", action="store_true")
     parser.add_argument("--archive-only", action="store_true")
+    parser.add_argument("--include-asr", action="store_true",
+                        help="Include only the complete Qwen3-ASR checkpoint and notices in the ZIP")
     args = parser.parse_args()
+    if args.include_asr and not (args.zip or args.archive_only):
+        parser.error("--include-asr requires --zip or --archive-only")
     destination = args.output.resolve()
     if destination == ROOT or not destination.is_relative_to((ROOT / "dist").resolve()):
         raise ValueError("Package output must be a dedicated folder inside this project's dist directory")
     if args.archive_only:
         if not (destination / "package.json").is_file():
             raise RuntimeError("Complete the package folder before creating its archive")
-        write_archive(destination)
+        write_archive(destination, include_asr=args.include_asr)
         return
     if args.refresh_app:
         python = destination / "runtime/python"
@@ -226,7 +261,7 @@ def main():
         })
         manifest_file.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         if args.zip:
-            write_archive(destination)
+            write_archive(destination, include_asr=args.include_asr)
         print("Updated application:", destination, flush=True)
         return
     destination.mkdir(parents=True, exist_ok=True)
@@ -264,7 +299,7 @@ def main():
     }
     (destination / "package.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     if args.zip:
-        write_archive(destination)
+        write_archive(destination, include_asr=args.include_asr)
     print("Package:", destination, flush=True)
 
 
