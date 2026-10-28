@@ -18,7 +18,7 @@ SPEAKER_TAG = re.compile(r"<\|speaker:([0-9]+)\|>")
 PHONEME_START = "<|phoneme_start|>"
 PHONEME_END = "<|phoneme_end|>"
 _PAIRED_TAG = re.compile(
-    r"<(?P<name>whisper|emphasis|soft|fast|slow|stress|forceful)>.*?"
+    r"<(?P<name>whisper|emphasis|soft|fast|slow|stress|forceful)>(?P<body>.*?)"
     r"</(?P=name)>",
     re.DOTALL,
 )
@@ -191,6 +191,9 @@ def _has_leading_speaker(units: list[_Unit], start: int, end: int) -> bool:
 def _unit_width(unit: _Unit) -> int:
     if not unit.protected:
         return len(unit.value)
+    paired = _PAIRED_TAG.fullmatch(unit.value)
+    if paired is not None:
+        return _content_width(paired["body"])
     start = unit.value.find(PHONEME_START)
     end = unit.value.find(PHONEME_END, start + len(PHONEME_START)) if start >= 0 else -1
     return end - start - len(PHONEME_START) if end >= 0 else 0

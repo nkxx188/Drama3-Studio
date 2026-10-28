@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+from math import ceil
 from pathlib import Path
 import time
 
@@ -20,6 +21,7 @@ from .protocols import (
 )
 from .workflows import DramaWorkflows, load_take, save_take
 from .sampling import DEFAULT_TOP_K
+from .text_chunks import _content_width
 
 
 class SceneSession:
@@ -62,25 +64,32 @@ class SceneSession:
 
     def _joint_batches(self, by_name):
         """Group complete dialogue lines, keeping no more than three speakers."""
-        batches, current, speakers, width = [], [], set(), 0
+        batches, widths, current, speakers, width = [], [], [], set(), 0
         for line in self.lines:
             character = by_name[line.character]
             text = line.text
             if SPEAKER_TAG_PATTERN.match(text.lstrip(UNICODE_WHITE_SPACE)) is None:
                 text = f"<|speaker:{character.speaker}|> {text}"
-            line_width = len(line.text)
+            line_width = _content_width(line.text)
             new_speaker = character.speaker not in speakers
             if current and (
                 width + line_width > self.max_chunk_chars
                 or new_speaker and len(speakers) >= 3
             ):
                 batches.append(current)
+                widths.append(width)
                 current, speakers, width = [], set(), 0
             current.append((character.speaker, text))
             speakers.add(character.speaker)
             width += line_width
         if current:
             batches.append(current)
+            widths.append(width)
+        # A small final turn should not pay another full reference/history prefill.
+        if (len(batches) > 1 and widths[-1] < max(1, self.max_chunk_chars // 3)
+                and widths[-2] + widths[-1] <= ceil(self.max_chunk_chars * 1.5)
+                and len({speaker for batch in batches[-2:] for speaker, _text in batch}) <= 3):
+            batches[-2].extend(batches.pop())
         return batches
 
     def run(self, *, progress=None, cancelled=None):
@@ -117,6 +126,11 @@ class SceneSession:
                             self.status = "cancelled"
                             break
                         batch_text = "\n".join(text for _speaker, text in batch)
+                        batch_speakers = {speaker for speaker, _text in batch}
+                        batch_references = [
+                            reference for reference in self.references
+                            if reference.speaker in batch_speakers
+                        ]
 
                         def batch_progress(event):
                             if progress:
@@ -127,11 +141,12 @@ class SceneSession:
                         result = workflows.run(
                             "tts", batch_text,
                             directory / f"joint-{batch_index + 1:05d}.wav",
-                            references=self.references, previous_takes=history,
+                            references=batch_references, previous_takes=history,
                             direction=note, seed=(self.seed + batch_index) % 2**64,
                             max_new_tokens=self.maximum, max_chunk_chars=self.max_chunk_chars,
                             single_chunk=True, progress=batch_progress, cancelled=cancelled,
                             **self.sampling)
+                        batch_reports.extend(result.get("chunks", []))
                         if result["status"] != "complete":
                             self.status = result["status"]
                             break
@@ -144,7 +159,6 @@ class SceneSession:
                         outputs.append(result["output"])
                         takes.append(take)
                         joint_samples += result.get("audio", {}).get("samples", 0)
-                        batch_reports.extend(result.get("chunks", []))
                         history = [takes[0], take] if takes[0] is not take else [take]
                     else:
                         if cancelled and cancelled():
@@ -192,7 +206,8 @@ class SceneSession:
                         "scene": self.scene,
                         "characters": [asdict(role) for role in self.characters],
                         "script": [asdict(line) for line in self.lines],
-                        "direction": self.direction, "segments": [],
+                        "direction": self.direction, "segments": [], "chunks": batch_reports,
+                        "total_seconds": time.perf_counter() - started,
                     }
                     return
                 for index, line in enumerate(self.lines):

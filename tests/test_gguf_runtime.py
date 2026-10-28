@@ -211,6 +211,53 @@ def test_native_reference_preparation_requires_protocol_five(engine, tmp_path):
     assert not engine.loaded
 
 
+def test_multi_reference_generation_caches_each_voice_before_synthesis(engine, tmp_path, monkeypatch):
+    import numpy as np
+    import soundfile as sf
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    monkeypatch.setenv("DRAMA_TEST_PROTOCOL", "5")
+    engine.build["protocol"] = 5
+    paths = [tmp_path / "voice-a.wav", tmp_path / "voice-b.wav"]
+    for index, path in enumerate(paths):
+        sf.write(path, np.full(8000, index * .1, dtype=np.float32), 8000)
+    references = [
+        SimpleNamespace(audio=path, transcript=lambda index=index: f"Speaker {index}.")
+        for index, path in enumerate(paths)
+    ]
+    prepare = Mock(wraps=engine.prewarm_references)
+    monkeypatch.setattr(engine, "prewarm_references", prepare)
+    first = engine.generate("First.", tmp_path / "first.wav", references=references)
+    assert prepare.call_count == 1
+    assert engine.references_prepared(references)
+    assert all("vq_codes" in descriptor and "audio_path" not in descriptor
+               for descriptor in json.loads(first["request_echo"]["options"]["references"]))
+    second = engine.generate("Second.", tmp_path / "second.wav", references=references)
+    assert prepare.call_count == 1
+    assert all("vq_codes" in descriptor
+               for descriptor in json.loads(second["request_echo"]["options"]["references"]))
+    sf.write(paths[0], np.full(8000, .2, dtype=np.float32), 8000)
+    engine.generate("Third.", tmp_path / "third.wav", references=references)
+    assert prepare.call_count == 2
+    assert list(prepare.call_args.args[0]) == references[:1]
+
+
+def test_prefill_width_uses_plan_bound_without_reducing_resident_expert_cache(engine, monkeypatch):
+    start = runtime.subprocess.Popen
+    environments = []
+
+    def popen(command, **kwargs):
+        environments.append(kwargs["env"])
+        return start(command, **kwargs)
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", popen)
+    engine.load()
+    assert environments[-1]["DRAMA_GGUF_PREFILL_WIDTH"] == str(engine.plan.prefill_work_width)
+    config = json.loads((engine._directory / "config.json").read_text(encoding="utf-8"))
+    assert config["options"]["fish_drama3.expert_cache_size"] == str(engine.plan.cache_experts)
+
+
 def test_inflight_oom_reaches_cpu_codec_fallback_after_host_and_cache_retries(engine, tmp_path, monkeypatch):
     engine.plan = replace(engine.plan, host_storage="pin", cache_experts=12, decoder_backend="cuda")
     original_receive = engine._receive

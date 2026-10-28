@@ -60,6 +60,7 @@ from drama_low_vram.protocols import (  # noqa: E402
     design_character, validate_content, validate_scene_inputs,
 )
 from drama_low_vram.scenes import SceneSession  # noqa: E402
+from drama_low_vram.text_chunks import _content_width, split_text  # noqa: E402
 from drama_low_vram.text_stream import TextStreamSession  # noqa: E402
 from drama_low_vram.workflows import DramaWorkflows, load_take  # noqa: E402
 from drama_low_vram.gguf_resources import is_gguf, resolve_gguf, inspect_gguf  # noqa: E402
@@ -78,6 +79,26 @@ def _safe_name(value: str, fallback: str = "item") -> str:
     value = "".join(character for character in str(value) if character.isalnum() or character in "-_. ")
     value = value.strip(" .")
     return value[:80] or fallback
+
+
+def _automatic_generation_limit(payload):
+    """Bound one generated chunk, never the duration of an entire long job."""
+    target = payload.get("max_chunk_chars", 160)
+    lines = payload.get("lines", [])
+    if payload.get("mode") == "scene" and payload.get("scene_strategy") == "joint":
+        widths = [_content_width(line["text"]) for line in lines]
+        width = max(max(widths, default=0), min(sum(widths), math.ceil(target * 1.5)))
+    else:
+        texts = [line["text"] for line in lines] if payload.get("mode") == "scene" else [
+            payload.get("text", "")]
+        whole = (payload.get("single_chunk") or payload.get("duration_frames")
+                 or payload.get("mode") in ("infill", "design", "audio_stream"))
+        pieces = texts if whole else [
+            chunk for text in texts for chunk in split_text(text, max_chars=target)]
+        width = max((_content_width(piece) for piece in pieces), default=0)
+    # Eight audio frames per spoken character plus a tail allowance is a
+    # conservative budget, not a duration hint. EOS still ends speech naturally.
+    return min(2048, max(768, width * 8 + 128, payload.get("duration_frames") or 0))
 
 
 def _inside(path: Path, parent: Path) -> Path:
@@ -669,6 +690,11 @@ class AppState:
             raise ValueError("Job payload must be an object")
         payload = clone(payload)
         payload = self._creative_request(payload)
+        automatic_length = payload.pop("automatic_length", False)
+        if not isinstance(automatic_length, bool):
+            raise ValueError("automatic_length must be a boolean")
+        if automatic_length:
+            payload["max_new_tokens"] = 2048
         mode = payload.get("mode", "tts")
         if mode not in ("tts", "revision", "edit", "infill", "scene", "design", "stream", "audio_stream"):
             raise ValueError("Unsupported interface mode")
@@ -701,6 +727,10 @@ class AppState:
                     record_id(identifier)
         elif payload.get("scene_strategy") == "joint" and payload.get("characters") and payload.get("lines"):
             self._scene_script(payload)
+        if automatic_length:
+            payload["max_new_tokens"] = _automatic_generation_limit(payload)
+            payload["length_policy"] = "automatic-v1"
+            self._validate_sampling(payload)
         if is_gguf(self.checkpoint):
             self._validate_gguf_job(payload)
             capabilities = self.capabilities()
@@ -1523,7 +1553,7 @@ class AppState:
             raise ValueError("Unknown creative operation")
         for key in (
             "temperature", "top_k", "top_p", "max_new_tokens",
-            "max_chunk_chars", "duration_frames",
+            "max_chunk_chars", "duration_frames", "automatic_length",
         ):
             if key in payload:
                 original[key] = payload[key]
@@ -1618,6 +1648,7 @@ class AppState:
                     combined_decode_bank=True,
                     host_gather="auto",
                     prefix_cache_mib=256,
+                    codec_max_frames=2048,
                     context_bucket_size=512,
                     compute_policy="auto",
                 ))
@@ -2321,7 +2352,7 @@ class AppState:
             snapshot = self.job(job_id).get("recipe", {}).get("reference_snapshot")
             references = ([VoiceReference(**item) for item in snapshot] if snapshot is not None
                           else self._references(payload))
-            if first_use and references and mode in ("tts", "audio_stream"):
+            if first_use and references and mode in ("tts", "audio_stream", "scene"):
                 prepare = (getattr(engine, "prewarm_references", None) if native
                            else getattr(engine, "prewarm_reference_prefix", None))
                 supported = not native or getattr(engine, "build", {}).get("protocol", 1) >= 5
@@ -2329,7 +2360,10 @@ class AppState:
                     clock.begin("initialization")
                     try:
                         self._event(job_id, {"stage": "prepare", "message": "Warming voice reference…"})
-                        prepare(references, cancelled=cancel)
+                        preparation = {"cancelled": cancel}
+                        if not native:
+                            preparation["max_new_tokens"] = int(payload.get("max_new_tokens", 768))
+                        prepare(references, **preparation)
                     except GenerationCancelled:
                         raise
                     except Exception:

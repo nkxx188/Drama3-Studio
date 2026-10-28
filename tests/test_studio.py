@@ -143,7 +143,7 @@ def test_draft_persists_text_reference_and_scene_state_separately(tmp_path):
         store.save_draft("single", {"invalid": float("nan")})
 
 
-def test_joint_dialogue_batches_complete_lines_with_all_references(tmp_path):
+def test_joint_dialogue_batches_complete_lines_with_only_active_references(tmp_path):
     engine = Native()
     session = SceneSession(
         engine, tmp_path / "joint.wav", scene="A room.",
@@ -154,13 +154,57 @@ def test_joint_dialogue_batches_complete_lines_with_all_references(tmp_path):
     assert list(session.run()) == []
     assert session.report["strategy"] == "joint" and session.report["take_file"]
     assert len(engine.calls) == 3
-    assert all(len(options["references"]) == 2 and options["task_mode"] == "joint"
+    assert all(len(options["references"]) == 1 and options["task_mode"] == "joint"
                for _text, options in engine.calls)
+    assert [options["references"][0].speaker for _text, options in engine.calls] == [0, 1, 0]
     assert engine.calls[0][0].count("<|speaker:0|>") == 1
     assert engine.calls[1][0] == "<|speaker:1|> Hi."
     assert engine.calls[2][0] == "<|speaker:0|> Again."
     assert session.report["segments"] == [] and session.report["chunks"]
     assert not session.report["native_audio_separators_used"]
+
+
+def test_joint_dialogue_ignores_control_markup_in_character_target(tmp_path):
+    engine = Native()
+    lines = [
+        SceneLine("A", "[frustrated]" + "甲" * 37),
+        SceneLine("B", "[panting][guilty]" + "乙" * 28),
+        SceneLine("A", "[holding back anger]" + "丙" * 15),
+        SceneLine("B", "<soft>" + "丁" * 38 + "</soft>"),
+        SceneLine("A", "[sighing][softening]" + "戊" * 19),
+    ]
+    session = SceneSession(
+        engine, tmp_path / "joint.wav", scene="A room.",
+        characters=[Character("A", "Calm."), Character("B", "Bright.", 1)],
+        lines=lines, strategy="joint", max_chunk_chars=160)
+    assert list(session.run()) == []
+    assert len(engine.calls) == 1
+    assert all(line.text in engine.calls[0][0] for line in lines)
+
+
+def test_joint_dialogue_merges_small_tail_within_soft_overflow(tmp_path):
+    engine = Native()
+    session = SceneSession(
+        engine, tmp_path / "joint.wav", scene="A room.",
+        characters=[Character("A", "Calm.")],
+        lines=[SceneLine("A", "甲" * 80), SceneLine("A", "乙" * 70),
+               SceneLine("A", "丙" * 20)],
+        strategy="joint", max_chunk_chars=160)
+    assert list(session.run()) == []
+    assert len(engine.calls) == 1
+    assert "甲" * 80 in engine.calls[0][0] and "丙" * 20 in engine.calls[0][0]
+
+
+def test_joint_dialogue_tail_merge_never_adds_a_fourth_speaker(tmp_path):
+    engine = Native()
+    session = SceneSession(
+        engine, tmp_path / "joint.wav", scene="A room.",
+        characters=[Character(str(index), "Natural.", index) for index in range(4)],
+        lines=[SceneLine(str(index), f"Line {index}.") for index in range(4)],
+        strategy="joint", max_chunk_chars=160)
+    assert list(session.run()) == []
+    assert len(engine.calls) == 2
+    assert engine.calls[1][0] == "<|speaker:3|> Line 3."
 
 
 def test_design_uses_character_system_not_spoken_description(tmp_path):
@@ -195,6 +239,48 @@ def test_bad_sampling_never_enters_queue(state, payload):
     with pytest.raises(ValueError):
         state.create_job(payload)
     assert not state.jobs() and state._engine is None
+
+
+def test_automatic_generation_budget_is_per_chunk_not_total_job_length(state):
+    text = ("A full sentence. " * 80).strip()
+    identifier = state.create_job({
+        "text": text, "automatic_length": True, "max_new_tokens": 1, "max_chunk_chars": 80})
+    recipe = state.job(identifier)["recipe"]
+    assert recipe["length_policy"] == "automatic-v1"
+    assert 768 <= recipe["max_new_tokens"] < 2048
+    assert "automatic_length" not in recipe
+
+
+def test_automatic_joint_budget_counts_speech_and_leaves_room_beyond_old_limit(state, monkeypatch):
+    monkeypatch.setattr(state, "capabilities", lambda: {"joint_dialogue": True})
+    payload = dialogue()
+    for line, width in zip(payload["lines"], (50, 50, 37)):
+        line["text"] = "[calm]" + "\u7532" * width
+    payload["automatic_length"] = True
+    identifier = state.create_job(payload)
+    assert state.job(identifier)["recipe"]["max_new_tokens"] == 137 * 8 + 128
+
+
+def test_automatic_budget_honors_duration_hint_and_remains_bounded(state):
+    identifier = state.create_job({
+        "text": "Short.", "automatic_length": True, "duration_frames": 1500})
+    assert state.job(identifier)["recipe"]["max_new_tokens"] == 1500
+    identifier = state.create_job({
+        "text": "\u7532" * 10000, "automatic_length": True, "single_chunk": True})
+    assert state.job(identifier)["recipe"]["max_new_tokens"] == 2048
+    with pytest.raises(ValueError, match="boolean"):
+        state.create_job({"text": "Short.", "automatic_length": "true"})
+
+
+def test_retry_preserves_frozen_limit_but_new_edit_can_request_automatic_length(state):
+    first = state.create_job({"text": "Original.", "max_new_tokens": 80, "studio": context()})
+    finish(state, first)
+    retried = state.create_job({"source_version": {"job_id": first}, "operation": "retry"})
+    assert state.job(retried)["recipe"]["max_new_tokens"] == 80
+    revised = state.create_job({
+        "source_version": {"job_id": first}, "operation": "revision",
+        "automatic_length": True})
+    assert state.job(revised)["recipe"]["max_new_tokens"] == 768
 
 
 def dialogue(strategy="joint"):

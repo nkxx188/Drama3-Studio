@@ -171,9 +171,13 @@ class Plan:
     load_peak_host_estimate_bytes: int
     notes: tuple[str, ...]
     prefill_cache_mib: int = 256
+    prefill_work_width: int = 8
+    prefill_workspace_bytes: int = 0
 
     def report(self):
-        return asdict(self) | {"cpu_expert_compute": False, "resource_estimates_are_measured_peaks": False}
+        return asdict(self) | {
+            "cpu_expert_compute": False, "resource_estimates_are_measured_peaks": False,
+        }
 
     def session_options(self):
         return {
@@ -197,14 +201,19 @@ class Plan:
                               notes=current.notes + ("Pinned source allocation failed: use mapped source.",))
             yield current
         if current.cache_experts > 8:
+            prefill_workspace = current.prefill_workspace_bytes
             current = replace(current, cache_experts=8,
                               resident_estimate_bytes=current.resident_estimate_bytes -
                               (current.cache_experts - 8) * current.layout.slot_bytes,
+                              workspace_estimate_bytes=current.workspace_estimate_bytes - prefill_workspace,
+                              prefill_work_width=min(current.prefill_work_width, 8),
+                              prefill_workspace_bytes=0,
                               notes=current.notes + ("Allocation fallback: minimum top-8 cache.",))
             yield current
         if current.decoder_backend == "cuda":
             current = replace(current, decoder_backend="cpu", codec_strategy="full",
                               resident_estimate_bytes=current.resident_estimate_bytes - current.layout.decoder_bytes,
+                              workspace_estimate_bytes=current.workspace_estimate_bytes - 512 * MIB,
                               notes=current.notes + ("Allocation fallback: CPU waveform decoder.",))
             yield current
 
@@ -233,23 +242,44 @@ def plan_resources(layout, *, free_vram, available_ram, cores, context=1024, sto
         raise MemoryError(
             f"GGUF minimum GPU estimate {minimum / GIB:.2f} GiB exceeds current free "
             f"{free_vram / GIB:.2f} GiB. Close GPU workloads or select a smaller model.")
-    codec_minimum = base + (cache if cache is not None else 8) * layout.slot_bytes + workspace + layout.decoder_bytes
+    # Windows can page CUDA allocations instead of failing. Keep decoder graph
+    # headroom separate from the experts that remain resident between requests.
+    decoder_workspace = 512 * MIB
+    codec_minimum = (
+        base + (cache if cache is not None else 8) * layout.slot_bytes
+        + workspace + layout.decoder_bytes + decoder_workspace
+    )
     codec_fits = layout.codec_cuda_supported and codec_minimum <= free_vram
     if decoder == "cuda" and not codec_fits:
         raise MemoryError("Requested CUDA codec plus expert cache exceeds current available VRAM estimate")
     chosen_decoder = "cuda" if decoder != "cpu" and codec_fits else "cpu"
+    if chosen_decoder == "cuda":
+        workspace += decoder_workspace
     resident = base + (layout.decoder_bytes if chosen_decoder == "cuda" else 0)
     slots = min(layout.experts, max(8, (free_vram - resident - workspace) // layout.slot_bytes))
     # Prefill still scales with cache width; use a conservative temporary cap.
     slots = min(slots, 64) if cache is None else cache
     if resident + slots * layout.slot_bytes + workspace > free_vram:
         raise MemoryError("Requested expert cache exceeds current available VRAM estimate")
+    # The native prefill workspace grows with its expert batching width. Budget
+    # each extra lane against one model-specific expert slot, then widen only
+    # from memory left over after resident weights, cache, and base workspaces.
+    prefill_headroom = max(0, free_vram - resident - slots * layout.slot_bytes - workspace)
+    prefill_width = min(slots, 8 + prefill_headroom // max(1, layout.slot_bytes))
+    prefill_workspace = (prefill_width - 8) * layout.slot_bytes
+    workspace += prefill_workspace
     # Pinning copies expert banks. The load also briefly materializes dense
     # sources and a full head. Page-cache source pages remain reclaimable.
     host_peak = layout.expert_bytes + layout.dense_bytes + layout.codec_bytes + 512 * MIB
     pinned = storage == "pin" or (storage == "auto" and available_ram >= host_peak)
     notes = ["Full top-8 GPU expert compute; mapped source may page to SSD under RAM pressure.",
              "Memory totals are estimates; failed allocations use bounded fallbacks."]
+    if chosen_decoder == "cuda":
+        notes.append("Leave an additional 512 MiB of headroom for CUDA waveform decoding.")
+    if prefill_workspace:
+        notes.append(
+            f"Reserve {prefill_workspace / MIB:.0f} MiB for prefill batching based on remaining VRAM."
+        )
     prefill_cache = 256 if available_ram >= 16 * GIB else 64 if available_ram >= 8 * GIB else 0
     if prefill_cache < 256:
         notes.append("Host memory pressure limits optional prefill graph cache retention.")
@@ -260,9 +290,10 @@ def plan_resources(layout, *, free_vram, available_ram, cores, context=1024, sto
     elif chosen_decoder == "cpu":
         notes.append("CPU waveform decoding selected by request or current available VRAM budget.")
     if slots == 64 and cache is None:
-        notes.append("Automatic cache capped at 64 until prefill width is independently bounded.")
+        notes.append("Automatic expert cache is capped at 64 experts per layer.")
     return Plan(layout, int(free_vram), int(available_ram), int(slots),
                 "pin" if pinned else "mapped", host_embedding, "cpu", chosen_decoder,
                 "stream" if chosen_decoder == "cuda" else "full",
                 context, max(1, min(8, cores or 1)), resident + slots * layout.slot_bytes,
-                workspace, host_peak, tuple(notes), prefill_cache)
+                workspace, host_peak, tuple(notes), prefill_cache,
+                int(prefill_width), int(prefill_workspace))

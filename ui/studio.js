@@ -43,8 +43,8 @@
     failedHistories: new Set(), restoredFrom: null, restoredModel: null, designRecipe: null,
     contexts: new Map(), contextLoads: new Map(), streamDraft: null, switchingInput: false };
   flow.voiceDraft = { main: ReferencePrep.fresh(), extraReferences: [] };
-  const formIds = ['text', 'direction', 'language', 'seed', 'max-frames', 'duration',
-    'target-seconds', 'max-seconds', 'max-chars', 'temperature', 'top-p', 'top-k', 'candidate-count', 'chunks',
+  const formIds = ['text', 'direction', 'language', 'seed', 'duration',
+    'target-seconds', 'max-chars', 'temperature', 'top-p', 'top-k', 'candidate-count', 'chunks',
     'source-take', 'previous-take', 'start-time', 'end-time', 'start-frame', 'end-frame'];
   let saveTimer;
   function fail(error, source = 'action') {
@@ -61,13 +61,13 @@
   }
   function settings({ checkDuration = false, scene = false } = {}) {
     const control = id => $(scene ? `scene-${id}` : id);
-    for (const id of ['max-seconds', 'max-chars', 'temperature', 'top-p', 'top-k',
+    for (const id of ['max-chars', 'temperature', 'top-p', 'top-k',
       ...(scene ? [] : ['candidate-count'])]) {
       if (!control(id).value || !control(id).checkValidity()) throw new Error(t('Check generation settings.'));
     }
     const values = {
       seed: control('random-seed').checked ? randomSeed() : UiNumber.read(control('seed')),
-      max_new_tokens: Math.max(1, Math.min(2048, Math.round(UiNumber.read(control('max-seconds')) * 44100 / 2048))),
+      automatic_length: true,
       max_chunk_chars: Math.round(UiNumber.read(control('max-chars'))),
       temperature: UiNumber.read(control('temperature')), top_p: UiNumber.read(control('top-p')),
       top_k: UiNumber.read(control('top-k')),
@@ -75,7 +75,7 @@
     if (!(values.temperature > 0 && values.top_p > 0)) throw new Error(t('Check generation settings.'));
     const duration = $('target-seconds');
     if (checkDuration && !$('duration').disabled && duration.value) {
-      if (!duration.checkValidity() || UiNumber.read(duration) > UiNumber.read($('max-seconds'))) {
+      if (!duration.checkValidity()) {
         throw new Error(t('Target duration exceeds the maximum generation length'));
       }
     }
@@ -115,7 +115,7 @@
     return { ...copy(flow.scene), script: $('dialogue-script').value, scriptVersion: 1,
       active_job_id: state.resultJobs.scene?.id || null,
       generation: { random: $('scene-random-seed').checked, form: Object.fromEntries(
-        ['seed', 'max-seconds', 'max-chars', 'temperature', 'top-p', 'top-k']
+        ['seed', 'max-chars', 'temperature', 'top-p', 'top-k']
           .map(id => [id, UiNumber.value($(`scene-${id}`))])) } };
   }
   function saveSoon() {
@@ -383,7 +383,6 @@
       $('text').value = version.text;
       $('direction').value = action === 'revision' ? '' : recipe.direction || '';
       $('language').value = recipe.language || '';
-      if (recipe.max_new_tokens) UiNumber.write($('max-seconds'), recipe.max_new_tokens * 2048 / 44100);
       if (recipe.max_chunk_chars !== undefined) UiNumber.write($('max-chars'), recipe.max_chunk_chars);
       UiNumber.write($('target-seconds'), recipe.duration_frames ? recipe.duration_frames * 2048 / 44100 : '');
       if (recipe.seed !== undefined) $('seed').value = recipe.seed;
@@ -443,7 +442,6 @@
       if (recipe[key] !== undefined) UiNumber.write($(`scene-${id}`), recipe[key]);
     }
     if (recipe.max_chunk_chars !== undefined) UiNumber.write($('scene-max-chars'), recipe.max_chunk_chars);
-    if (recipe.max_new_tokens) UiNumber.write($('scene-max-seconds'), recipe.max_new_tokens * 2048 / 44100);
     view('scene'); enhanceAllSelects(); saveSoon();
   }
   function findTake(path) {
@@ -710,10 +708,6 @@
       if (recipe[key] !== undefined) UiNumber.write(control(id), recipe[key]);
     }
     if (recipe.seed !== undefined) control('random-seed').checked = false;
-    if (recipe.max_new_tokens !== undefined) {
-      if (!scene) $('max-frames').value = recipe.max_new_tokens;
-      UiNumber.write(control('max-seconds'), recipe.max_new_tokens * 2048 / 44100);
-    }
     if (scene) return;
     $('duration').value = recipe.duration_frames || '';
     UiNumber.write($('target-seconds'), recipe.duration_frames ? recipe.duration_frames * 2048 / 44100 : '');
@@ -995,7 +989,6 @@
     const controls = node('div', 'field-grid');
     for (const [id, label, value, step, min, max] of [
       ['target-seconds', 'Target duration (seconds)', '', 'any', '.01', '95.109'],
-      ['max-seconds', 'Max duration (seconds)', '35.67', 'any', '.01', '95.109'],
       ['max-chars', 'Text chunk target', '160', '1', '80', '320'],
       ['temperature', 'Temperature', '0.8', 'any', '0', '2'],
       ['top-p', 'Top P', '.8', 'any', '0', '1'],
@@ -1010,15 +1003,10 @@
     const exactTitle = node('summary', '', t('Frame limits')); exactTitle.dataset.i18n = 'Frame limits';
     const frameFields = node('div', 'field-grid');
     const previousGrid = $('duration').parentElement.parentElement;
-    for (const id of ['duration', 'max-frames']) frameFields.append($(id).parentElement);
+    frameFields.append($('duration').parentElement);
+    internal.append($('max-frames').parentElement);
     previousGrid.classList.remove('three');
     exact.append(exactTitle, frameFields); $('advanced-settings').append(exact);
-    $('max-seconds').addEventListener('input', () => {
-      if ($('max-seconds').value) $('max-frames').value = Math.round(Number($('max-seconds').value) * 44100 / 2048);
-    });
-    $('max-frames').addEventListener('input', () => {
-      if ($('max-frames').value) UiNumber.write($('max-seconds'), Number($('max-frames').value) * 2048 / 44100);
-    });
     $('target-seconds').addEventListener('input', () => {
       $('duration').value = $('target-seconds').value ? Math.round(Number($('target-seconds').value) * 44100 / 2048) : '';
     });
@@ -1097,6 +1085,7 @@
   async function prepareRequest(payload) {
     const design = voiceDesignActive();
     const common = settings({ checkDuration: !design });
+    delete payload.max_new_tokens;
     if (design) {
       if (!state.capabilities?.voice_design) throw new Error(t('Not supported by this model'));
       const description = $('voice-description').value.trim();
@@ -1647,7 +1636,6 @@
     parameters.append(localized('summary', '', 'Generation settings'));
     const fields = node('div', 'field-grid');
     for (const [id, label, value, step, min, max] of [
-      ['max-seconds', 'Max dialogue length (seconds)', UiNumber.format(768 * 2048 / 44100), 'any', '.01', '95.109'],
       ['max-chars', 'Text chunk target', '160', '1', '80', '320'],
       ['temperature', 'Temperature', state.model?.runtime === 'gguf' ? '1' : '.7', 'any', '0', '2'],
       ['top-p', 'Top P', state.model?.runtime === 'gguf' ? '.9' : '.7', 'any', '0', '1'],
@@ -1713,12 +1701,6 @@
       item.setAttribute('aria-pressed', String(item.dataset.strategy === flow.scene.strategy));
       item.disabled = Boolean(flow.scene.operation)
         || !(item.dataset.strategy === 'joint' ? state.capabilities?.joint_dialogue : state.capabilities?.scene_scheduler);
-    }
-    const maximum = document.querySelector('label[for="scene-max-seconds"]');
-    if (maximum) {
-      maximum.dataset.i18n = flow.scene.strategy === 'per_line'
-        ? 'Max length per turn (seconds)' : 'Max dialogue length (seconds)';
-      maximum.textContent = t(maximum.dataset.i18n);
     }
     syncControls();
   }

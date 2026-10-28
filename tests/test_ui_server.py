@@ -244,7 +244,8 @@ def test_restored_reference_does_not_cold_load_a_model(tmp_path, monkeypatch):
         state.shutdown()
 
 
-def test_first_generation_prepares_reference_once_and_release_defers_it_again(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["tts", "scene"])
+def test_first_generation_prepares_reference_once_and_release_defers_it_again(tmp_path, monkeypatch, mode):
     monkeypatch.setattr(server, "ROOT", tmp_path)
     monkeypatch.setattr(server, "load_native_runtime", lambda _root: {"protocol": 5})
     state = server.AppState()
@@ -282,14 +283,22 @@ def test_first_generation_prepares_reference_once_and_release_defers_it_again(tm
     try:
         assert state.start_reference_prewarm({}) == {"status": "idle"}
         for _ in range(2):
-            payload = {"mode": "tts", "text": "First use reference test."}
+            payload = {"mode": "tts", "text": "First use reference test."} if mode == "tts" else {
+                "mode": "scene", "scene_strategy": "joint", "scene": "A room.",
+                "characters": [{"name": "A", "description": "Natural.", "speaker": 0}],
+                "lines": [{"character": "A", "text": "First use reference test."}],
+            }
             job_id = state.create_job(payload)
             state._run_job(job_id, payload)
             assert state.job(job_id)["status"] == "complete", state.job(job_id).get("error")
         assert calls == ["prepare", "generate", "generate"]
         state._release_engine_resources()
         assert state.start_reference_prewarm({}) == {"status": "idle"}
-        payload = {"mode": "tts", "text": "Run again after release."}
+        payload = {"mode": "tts", "text": "Run again after release."} if mode == "tts" else {
+            "mode": "scene", "scene_strategy": "joint", "scene": "A room.",
+            "characters": [{"name": "A", "description": "Natural.", "speaker": 0}],
+            "lines": [{"character": "A", "text": "Run again after release."}],
+        }
         job_id = state.create_job(payload)
         state._run_job(job_id, payload)
         assert state.job(job_id)["status"] == "complete", state.job(job_id).get("error")
@@ -334,7 +343,8 @@ def test_python_first_use_keeps_reference_preparation_inside_the_generation_task
     engine = SimpleNamespace(
         load=lambda: calls.append("load"),
         close=Mock(),
-        prewarm_reference_prefix=lambda references, **_kwargs: calls.append(("prepare", references)),
+        prewarm_reference_prefix=lambda references, **kwargs: calls.append(
+            ("prepare", references, kwargs["max_new_tokens"])),
     )
 
     def get_engine(_job):
@@ -353,11 +363,29 @@ def test_python_first_use_keeps_reference_preparation_inside_the_generation_task
         assert state.start_reference_prewarm({}) == {"status": "idle"}
         assert calls == []
         for _ in range(2):
-            payload = {"mode": "tts", "text": "Reference test."}
+            payload = {"mode": "tts", "text": "Reference test.", "max_new_tokens": 1500}
             job_id = state.create_job(payload)
             state._run_job(job_id, payload)
             assert state.job(job_id)["status"] == "complete", state.job(job_id).get("error")
-        assert calls == ["load", ("prepare", [reference]), "generate", "load", "generate"]
+        assert calls == ["load", ("prepare", [reference], 1500), "generate", "load", "generate"]
+    finally:
+        state.shutdown()
+
+
+def test_python_service_codec_budget_matches_validated_generation_capacity(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    monkeypatch.setattr(server, "inspect_model", lambda _: {"ready": True})
+    monkeypatch.setattr(server, "is_gguf", lambda _: False)
+    monkeypatch.setattr(server, "select_python_device", lambda: "cuda:0")
+    factory = Mock(return_value=SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(server, "DramaEngine", factory)
+    state = server.AppState()
+    state._event = lambda *_args: None
+    try:
+        state._get_engine("fixture")
+        assert factory.call_args.args[0].codec_max_frames == 2048
     finally:
         state.shutdown()
 

@@ -31,7 +31,8 @@ def scene_runtime(tmp_path, monkeypatch):
         def run(self, _mode, text, output, **kwargs):
             calls.append((text, kwargs))
             if "fail" in text:
-                return {"status": "incomplete"}
+                return {"status": "incomplete", "chunks": [
+                    {"frames": 32, "finish_reason": "length", "decode_seconds": 1.0}]}
             multiple = "Longline" in text
             count = 5 if multiple else 3
             codes = torch.arange(count * 3).reshape(3, count) % 8
@@ -105,6 +106,20 @@ def test_incomplete_line_is_never_used_to_publish_a_successful_scene(scene_runti
     assert len(list(scene.run())) == 1
     assert scene.status == "incomplete"
     assert scene.report["output"] is None and not h.output.exists()
+
+
+def test_incomplete_joint_retains_frame_limit_and_timing_diagnostics(scene_runtime):
+    h = scene_runtime
+    scene = SceneSession(
+        h.engine, h.output, scene="A quiet room.",
+        characters=[Character("Ada", "A steady voice.")],
+        lines=[SceneLine("Ada", "fail")], strategy="joint", max_new_tokens=32)
+    assert list(scene.run()) == []
+    assert scene.status == "incomplete" and scene.report["output"] is None
+    assert scene.report["chunks"] == [
+        {"frames": 32, "finish_reason": "length", "decode_seconds": 1.0}]
+    assert scene.report["total_seconds"] >= 0
+    assert not h.output.exists()
 
 
 def test_wrong_character_reference_or_speaker_tag_fails_before_any_generation(scene_runtime):

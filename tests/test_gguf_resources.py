@@ -15,7 +15,7 @@ def layout(q8=True):
 
 
 def test_available_memory_is_not_reduced_by_system_usage_again():
-    plan = plan_resources(layout(), free_vram=int(7.5 * GIB), available_ram=44 * GIB, cores=8)
+    plan = plan_resources(layout(), free_vram=int(8.5 * GIB), available_ram=44 * GIB, cores=8)
     assert plan.host_storage == "pin"
     assert plan.available_ram_bytes == 44 * GIB
     assert plan.host_embedding and plan.decoder_backend == "cuda"
@@ -39,6 +39,40 @@ def test_q4_uses_compatible_codec_and_embedding_independently_of_expert_format()
     assert plan.host_embedding and plan.decoder_backend == "cuda"
     assert plan.codec_backend == "cpu" and plan.codec_strategy == "stream"
     assert not plan.layout.validated_q8
+
+
+def test_cuda_codec_keeps_separate_graph_headroom_and_bounds_prefill_work():
+    model = replace(layout(False), dense_bytes=5814 * MIB, expert_bytes=17280 * MIB,
+                    slot_bytes=int(67.5 * MIB))
+    plan = plan_resources(model, free_vram=int(7.0 * GIB), available_ram=40 * GIB, cores=8)
+    assert plan.decoder_backend == "cuda"
+    assert plan.workspace_estimate_bytes == 1024 * MIB + 1024 * 128 * 1024
+    assert plan.prefill_work_width == 8
+    assert plan.report()["prefill_work_width"] == 8
+    assert plan.cache_experts > plan.prefill_work_width
+    assert plan.resident_estimate_bytes + plan.workspace_estimate_bytes <= plan.free_vram_bytes
+    high = plan_resources(model, free_vram=24 * GIB, available_ram=48 * GIB, cores=8)
+    assert high.prefill_work_width == high.cache_experts
+
+
+def test_prefill_width_scales_with_actual_post_plan_vram_headroom():
+    model = replace(layout(False), dense_bytes=5814 * MIB, expert_bytes=17280 * MIB,
+                    slot_bytes=int(67.5 * MIB))
+    plans = [
+        plan_resources(model, free_vram=int(gib * GIB), available_ram=48 * GIB, cores=8)
+        for gib in (7, 9, 10, 11, 12, 14)
+    ]
+    widths = [plan.prefill_work_width for plan in plans]
+    assert widths == sorted(widths)
+    assert widths[:2] == [8, 8]
+    assert 8 < widths[2] <= 10
+    assert widths[2] < plans[2].cache_experts
+    assert widths[3] > widths[2]
+    assert widths[4] > widths[3]
+    assert all(plan.prefill_workspace_bytes ==
+               (plan.prefill_work_width - 8) * model.slot_bytes for plan in plans)
+    assert all(plan.resident_estimate_bytes + plan.workspace_estimate_bytes
+               <= plan.free_vram_bytes for plan in plans)
 
 
 @pytest.mark.parametrize("kinds", [(2,), (6,), (11,), (12,), (13,), (14,), (12, 14)])
@@ -126,6 +160,8 @@ def test_fallbacks_are_finite_monotonic_and_preserve_top8():
     assert len(options) == 4
     assert options[-1].host_storage == "mapped" and options[-1].decoder_backend == "cpu"
     assert options[-1].cache_experts == 8
+    assert options[-2].prefill_work_width == 8
+    assert options[-2].prefill_workspace_bytes == 0
     assert all(next.resident_estimate_bytes <= prev.resident_estimate_bytes
                for prev, next in zip(options, options[1:]))
     assert list(options[-1].fallbacks()) == []

@@ -289,10 +289,10 @@ class GGUFEngine:
                     environment["DRAMA_GGUF_PIPELINE_WIDTH"] = str(self.pipeline_width)
                     if self.pipeline_serial:
                         environment["DRAMA_GGUF_PIPELINE_SERIAL"] = "1"
-                if self.prefill_width is not None:
-                    if not 1 <= self.prefill_width <= plan.cache_experts:
-                        raise ValueError("Prefill work width exceeds cache capacity")
-                    environment["DRAMA_GGUF_PREFILL_WIDTH"] = str(self.prefill_width)
+                work_width = self.prefill_width if self.prefill_width is not None else plan.prefill_work_width
+                if not 1 <= work_width <= plan.cache_experts:
+                    raise ValueError("Prefill work width exceeds cache capacity")
+                environment["DRAMA_GGUF_PREFILL_WIDTH"] = str(work_width)
                 self._event(message="Loading native GGUF model", plan=plan.report())
                 self._stderr = (self._directory / "stderr.log").open("wb")
                 self._process = subprocess.Popen(
@@ -541,6 +541,21 @@ class GGUFEngine:
             request["options"]["references"] = json.dumps(descriptors, ensure_ascii=False)
         with self._lock:
             self.load(cancelled=cancelled)
+            if (len(references) > 1 and self.build.get("protocol", 1) >= 5
+                    and any("audio_path" in descriptor for descriptor in descriptors)):
+                missing = [
+                    reference for reference, descriptor in zip(references, descriptors)
+                    if "audio_path" in descriptor
+                ]
+                self.prewarm_references(missing, cancelled=cancelled)
+                for reference, descriptor in zip(references, descriptors):
+                    if "audio_path" not in descriptor:
+                        continue
+                    cached = self._cached_reference_codes(reference.audio)
+                    if cached:
+                        descriptor.pop("audio_path")
+                        descriptor["vq_codes"] = cached["vq_codes"]
+                request["options"]["references"] = json.dumps(descriptors, ensure_ascii=False)
             reused = self._count > 0
             context_resizes = []
             # The plan has a finite descending chain (mapped, minimum cache,
@@ -612,7 +627,7 @@ class GGUFEngine:
                         "requested_waveform_decoder": self.decoder,
                         "pipeline_extra_host_staging_estimate_bytes": (
                             self.pipeline_width * self.plan.layout.slot_bytes // self.plan.layout.layers * 2),
-                        "prefill_work_width": self.prefill_width or self.plan.cache_experts,
+                        "prefill_work_width": self.prefill_width or self.plan.prefill_work_width,
                         "native_log": str(self._directory / "native.log"),
                         "timings": timings,
                     }

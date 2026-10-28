@@ -167,6 +167,16 @@ def test_paired_scope_and_semicolon_are_natural_boundaries():
     assert recover(chunks, text) == text
 
 
+def test_paired_scope_counts_spoken_text_toward_chunk_target():
+    from drama_low_vram.text_chunks import _content_width
+    assert _content_width("[calm]<soft>甲" + "<emphasis>乙</emphasis>丙</soft>") == 3
+    text = "<soft>" + "甲" * 100 + "</soft>" + "乙" * 100
+    chunks = split_text(text, 80)
+    assert len(chunks) > 1
+    assert any("<soft>" + "甲" * 100 + "</soft>" in chunk for chunk in chunks)
+    assert recover(chunks, text) == text
+
+
 def test_tagged_dialogue_limits_distinct_speakers_per_chunk():
     text = (
         "<|speaker:0|>A. <|speaker:1|>B. "
