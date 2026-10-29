@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--startup-checks", action="store_true")
     parser.add_argument("--reference-flow-checks", action="store_true")
     parser.add_argument("--reference-prewarm-checks", action="store_true")
+    parser.add_argument("--reference-switch-checks", action="store_true")
     parser.add_argument("--polish-checks", action="store_true")
     parser.add_argument("--result-controls-checks", action="store_true")
     arguments = parser.parse_args()
@@ -167,6 +168,7 @@ def main():
         result = subprocess.run(
             [shutil.which("node") or "node", str(ROOT / "tools" / (
                 "validate_audio_import_ui.cjs" if arguments.audio_import_checks else
+                "validate_reference_switch_ui.cjs" if arguments.reference_switch_checks else
                 "validate_reference_prewarm_ui.cjs" if arguments.reference_prewarm_checks else
                 "validate_result_controls_ui.cjs" if arguments.result_controls_checks else
                 "validate_studio_polish_ui.cjs" if arguments.polish_checks else

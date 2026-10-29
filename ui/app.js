@@ -8,6 +8,7 @@ const state = {
   switchingModel: false, releasingResources: false, engineLoaded: false,
   modelError: null, modelRequest: 0, modelPickerAvailable: false,
   cloneFile: null, cloneUpload: null, clonePreviewUrl: null, cloneRevision: 0, cloneMissing: false,
+  cloneInputFile: null, cloneUploadSource: null, cloneUploadPromiseSource: null,
   cloneUploadPromise: null, cloneAsrPromise: null, cloneAsrRequest: 0,
   cloneTextRevision: 0, cloneAsrText: '', cloneAsrStatus: '', cloneAsrTask: null,
   cloneOriginal: null, cloneCropping: false,
@@ -918,6 +919,7 @@ function clearCloneAudio(resetInput = true) {
   ++state.cloneAsrRequest;
   ++state.cloneTextRevision;
   state.cloneUploadPromise = state.cloneAsrPromise = null;
+  state.cloneInputFile = state.cloneUploadSource = state.cloneUploadPromiseSource = null;
   state.cloneAsrText = state.cloneAsrStatus = '';
   state.cloneAsrTask = null;
   state.cloneOriginal = null;
@@ -957,16 +959,18 @@ function selectCloneAudio(file, { auto = true, upload = null, original = null } 
   if (!file) return;
   if (!/\.(wav|mp3|flac|ogg|m4a)$/i.test(file.name)) {
     $('clone-note').textContent = t('Choose a WAV, MP3, FLAC, OGG or M4A reference');
-    return;
+    return false;
   }
   if (file.size < 32 || file.size > 128 * 1024 ** 2) {
     $('clone-note').textContent = t('Reference audio must be nonempty and no larger than 128 MiB');
-    return;
+    return false;
   }
   cancelReferencePrewarm();
   clearCloneAudio(false);
   state.cloneFile = file;
   state.cloneUpload = upload;
+  state.cloneInputFile = $('clone-audio').files[0] || null;
+  state.cloneUploadSource = upload ? { file, revision: state.cloneRevision } : null;
   state.cloneOriginal = original;
   state.clonePreviewUrl = URL.createObjectURL(file);
   state.selectedVoiceIds.clear();
@@ -979,6 +983,13 @@ function selectCloneAudio(file, { auto = true, upload = null, original = null } 
   $('restore-clone-audio').classList.toggle('hidden', !original);
   updateVoiceSelection();
   if (auto) transcribeClone();
+  return true;
+}
+function syncCloneAudioSelection() {
+  const file = $('clone-audio').files[0];
+  // File selection can arrive before its change notification. Keep the last
+  // observed input separate so a crop or restored reference stays authoritative.
+  return !file || file === state.cloneInputFile || selectCloneAudio(file);
 }
 function renderCloneSummary() {
   const audio = $('clone-file-audio'), preview = $('clone-summary-play');
@@ -1056,10 +1067,12 @@ $('restore-clone-audio').onclick = () => {
   else scheduleReferencePrewarm();
 };
 async function uploadCloneAudio() {
-  if (state.cloneUpload) return state.cloneUpload;
-  if (!state.cloneUploadPromise) {
-    const revision = state.cloneRevision;
-    const file = state.cloneFile;
+  const revision = state.cloneRevision, file = state.cloneFile;
+  if (!file) throw new Error(t('Choose an audio file.'));
+  const current = source => source?.revision === revision && source.file === file;
+  if (state.cloneUpload && current(state.cloneUploadSource)) return state.cloneUpload;
+  state.cloneUpload = null; state.cloneUploadSource = null;
+  if (!state.cloneUploadPromise || !current(state.cloneUploadPromiseSource)) {
     const data = new FormData();
     data.append('audio', file);
     $('clone-note').textContent = t('Uploading…');
@@ -1068,16 +1081,18 @@ async function uploadCloneAudio() {
         const response = await fetch('/api/reference-audio', { method: 'POST', body: data });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-        if (revision !== state.cloneRevision) {
+        if (revision !== state.cloneRevision || file !== state.cloneFile) {
           throw new Error(t('Reference changed. Click Generate again.'));
         }
         state.cloneUpload = result;
+        state.cloneUploadSource = { file, revision };
         return result;
       } finally {
         if (revision === state.cloneRevision) $('clone-note').textContent = '';
       }
     })();
     state.cloneUploadPromise = pending;
+    state.cloneUploadPromiseSource = { file, revision };
     pending.catch(() => {
       if (state.cloneUploadPromise === pending) state.cloneUploadPromise = null;
     });
@@ -1166,6 +1181,7 @@ function transcribeClone(force = false) {
   return pending;
 }
 async function prepareCloneReference() {
+  if (!syncCloneAudioSelection()) throw new Error($('clone-note').textContent);
   if (state.cloneMissing) throw new Error(t('Reference audio is missing'));
   if (!state.cloneFile) return [];
   if (state.cloneCropping) throw new Error(t('Wait for audio cropping to finish.'));
@@ -1201,7 +1217,9 @@ function updateVoiceSelection() {
 $('default-voice').onclick = () => {
   state.selectedVoiceIds.clear(); clearCloneAudio(); cancelReferencePrewarm();
 };
-$('clone-audio').addEventListener('change', event => selectCloneAudio(event.target.files[0]));
+for (const event of ['input', 'change']) {
+  $('clone-audio').addEventListener(event, syncCloneAudioSelection);
+}
 $('remove-clone-audio').onclick = () => { clearCloneAudio(); cancelReferencePrewarm(); };
 $('replace-clone-audio').onclick = () => $('clone-audio').click();
 $('transcribe-clone').onclick = () => transcribeClone(true);

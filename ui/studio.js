@@ -125,7 +125,8 @@
   async function save() {
     if (!flow.ready || flow.restoring) return;
     try {
-      if (state.cloneFile && !state.cloneUpload) await uploadCloneAudio();
+      if (!syncCloneAudioSelection()) return;
+      if (state.cloneFile) await uploadCloneAudio();
       const single = capture(), scene = sceneSnapshot(), voice = {
         ...copy(flow.voiceDraft), name: $('voice-name').value,
       };
@@ -1084,6 +1085,9 @@
   }
   async function prepareRequest(payload) {
     const design = voiceDesignActive();
+    if (!design && !flow.operation && !syncCloneAudioSelection()) {
+      throw new Error($('clone-note').textContent);
+    }
     const common = settings({ checkDuration: !design });
     delete payload.max_new_tokens;
     if (design) {
@@ -1144,6 +1148,7 @@
       return { voice_bindings: [] };
     }
     if (flow.restoring) return null;
+    if (!syncCloneAudioSelection()) return null;
     if (state.cloneFile && !$('clone-transcript').value.trim()) return null;
     try {
       const primary = state.cloneFile ? await prepareCloneReference() : [];
@@ -1205,11 +1210,16 @@
       Boolean(state.cloneFile || state.cloneMissing || flow.libraryReferences.length));
   }
   async function singleBindings(uploaded = null, references = null) {
+    if (!syncCloneAudioSelection()) throw new Error($('clone-note').textContent);
+    const revision = state.cloneRevision;
     if (!references) { renderLibraryReferences(); references = [...flow.libraryReferences, ...flow.singleReferences]; }
     const [primary, groups] = await Promise.all([
       uploaded === null ? prepareCloneReference() : uploaded,
       Promise.all(references.map(reference => ReferencePrep.readAll(reference, 0))),
     ]);
+    if (!syncCloneAudioSelection() || revision !== state.cloneRevision) {
+      throw new Error(t('Reference changed. Click Generate again.'));
+    }
     return [...primary, ...groups.flat()];
   }
   async function savePreparedVoice() {
