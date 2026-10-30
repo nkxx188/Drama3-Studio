@@ -52,6 +52,18 @@ def run_next(tasks):
     function(*args)
 
 
+def test_uploaded_edit_automatically_budgets_length_and_preserves_retry_switch(importer):
+    state, tasks = importer
+    upload = recording(state)
+    created = state.start_uploaded_audio_edit(request(upload, automatic_length=True, silence_retry=True))
+    recipe = state.job(created["id"])["recipe"]
+    assert recipe["max_new_tokens"] == 768 and recipe["length_policy"] == "automatic-v1"
+    assert recipe["silence_retry"] is True and recipe["duration_frames"] is None
+    for bad in ("true", 1, None):
+        with pytest.raises(ValueError, match="silence_retry"):
+            state.start_uploaded_audio_edit(request(upload, silence_retry=bad))
+
+
 @pytest.mark.parametrize("backend,format", [("gguf", "WAV"), ("python", "FLAC")])
 @pytest.mark.parametrize("operation", ["revision", "reword", "infill"])
 def test_upload_is_prepared_only_with_edit_generation(importer, monkeypatch, backend, format, operation):

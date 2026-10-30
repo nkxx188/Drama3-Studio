@@ -7,7 +7,7 @@
   const fresh = () => ({
     upload: null, original: '', text: '', direction: '', mode: 'whole', quote: '', replacement: '',
     target: null, range: null, resultJobId: null, workId: crypto.randomUUID(), segmentId: crypto.randomUUID(),
-    parameters: { maximum: '35.67', duration: '', max_chars: '160', temperature: '1', top_p: '.9', top_k: '0', seed: '123', random: true },
+    parameters: { silence_retry: true, max_chars: '160', temperature: '1', top_p: '.9', top_k: '0', seed: '123', random: true },
   });
   let draft = fresh(), ready = false, hydrating = false, uploading = false, submitting = false;
   let job = null, asrBusy = false, asrStatus = '', failure = '', request = 0, originalRevision = 0;
@@ -90,8 +90,8 @@
     $('result-badge').textContent = job ? statusLabel(job.status) : '';
     $('cancel').hidden = !running;
     $('cancel').disabled = Boolean(job?.cancel_requested);
-    $('result-error').hidden = !job?.error;
-    $('result-error').textContent = job?.error ? message(job.error) : '';
+    $('result-error').hidden = !job || !jobIssue(job);
+    $('result-error').textContent = job ? jobIssue(job) : '';
     $('output-empty').hidden = Boolean(job);
     if (!job) {
       $('result-box').querySelectorAll('audio').forEach(audio => audio.pause());
@@ -107,7 +107,7 @@
     }[timing.phase];
     // Runtime events also describe context changes; the measured phase is authoritative.
     $('stage').textContent = !running ? '' : job.status === 'queued' ? t('Queued')
-      : phase ? t(phase) : stageLabel(event?.stage) || t('Generating');
+      : retryStage(job) || (phase ? t(phase) : stageLabel(event?.stage) || t('Generating'));
     $('progress-count').textContent = !running || timing.phase === 'generation' ? generationTimeLabel(job) : '';
     $('progress-bar').style.width = running ? '32%' : job.status === 'complete' ? '100%' : '0%';
     $('progress-bar').classList.toggle('indeterminate', running);
@@ -154,8 +154,7 @@
     if (draft.range) {
       UiNumber.write($('start'), draft.range.start); UiNumber.write($('end'), draft.range.end);
     }
-    for (const input of [params.maximum, params.duration, params.temperature, params.top_p, params.top_k]) input.disabled = busy;
-    params.duration.disabled ||= !state.capabilities?.duration_hint;
+    for (const input of [params.max_chars, params.temperature, params.top_p, params.top_k, silenceRetry]) input.disabled = busy;
     params.seed.disabled = busy || draft.parameters.random;
     $('random').disabled = busy;
     $('local-note').textContent = local && draft.range && (draft.quote || insertion()) && !target()
@@ -255,17 +254,16 @@
   }
   function sampling() {
     for (const [key, input] of Object.entries(params)) {
-      if (key === 'seed' && draft.parameters.random || key === 'duration' && !input.value) continue;
+      if (key === 'seed' && draft.parameters.random) continue;
       if (!input.value || !input.checkValidity()) throw new Error(t('Check generation settings.'));
     }
-    const read = key => UiNumber.read(params[key]), duration = read('duration'), maximum = read('maximum');
+    const read = key => UiNumber.read(params[key]);
     if (!(read('temperature') > 0 && read('top_p') > 0)) throw new Error(t('Check generation settings.'));
-    if (duration > maximum) throw new Error(t('Target duration exceeds the maximum generation length'));
     return {
       seed: draft.parameters.random ? crypto.getRandomValues(new Uint32Array(1))[0] : read('seed'),
-      max_new_tokens: Math.max(1, Math.round(maximum * 44100 / 2048)),
+      automatic_length: true, silence_retry: silenceRetry.checked,
       max_chunk_chars: Math.round(read('max_chars')),
-      duration_frames: duration ? Math.max(1, Math.round(duration * 44100 / 2048)) : null,
+      duration_frames: null,
       temperature: read('temperature'), top_p: read('top_p'), top_k: read('top_k'),
     };
   }
@@ -345,6 +343,7 @@
       }
       for (const [key, input] of Object.entries(params)) UiNumber.write(input, draft.parameters[key]);
       $('random').checked = draft.parameters.random;
+      silenceRetry.checked = draft.parameters.silence_retry !== false;
       ready = true;
       if (draft.resultJobId) await poll(draft.resultJobId);
     } catch (error) { failure = error.message; }
@@ -354,8 +353,6 @@
     }
   }
   for (const [key, label, min, max, step] of [
-    ['maximum', 'Max duration (seconds)', '.01', '95.109', 'any'],
-    ['duration', 'Target duration (seconds)', '.01', '95.109', 'any'],
     ['max_chars', 'Text chunk target', '80', '320', '1'],
     ['temperature', 'Temperature', '0', '2', 'any'], ['top_p', 'Top P', '0', '1', 'any'],
     ['top_k', 'Top K', '0', '8193', '1'], ['seed', 'Seed', '0', String(2 ** 32 - 1), '1'],
@@ -368,6 +365,21 @@
     input.oninput = () => { draft.parameters[key] = UiNumber.value(input); draft.parameters.edited = true; render(); saveSoon(); };
     wrap.append(caption, input); $('parameters').append(wrap);
   }
+  const silenceRetry = document.createElement('input'); silenceRetry.type = 'checkbox';
+  silenceRetry.checked = true;
+  silenceRetry.id = 'audio-import-silence-retry';
+  const silenceField = document.createElement('label'); silenceField.className = 'check-field';
+  const silenceLabel = document.createElement('span');
+  silenceLabel.dataset.i18n = 'Auto-retry silent chunks'; silenceLabel.textContent = t(silenceLabel.dataset.i18n);
+  silenceField.dataset.i18nTitle = 'Retry chunks with over 5 seconds of near-silence, up to twice.';
+  silenceField.title = t(silenceField.dataset.i18nTitle);
+  silenceField.append(silenceRetry, silenceLabel);
+  $('parameters').append($('random').closest('.check-field'));
+  $('parameters').after(silenceField);
+  silenceRetry.onchange = () => {
+    draft.parameters.silence_retry = silenceRetry.checked;
+    draft.parameters.edited = true; render(); saveSoon();
+  };
   for (const id of ['text', 'replacement']) ScriptEditor.mount($(id));
   $('file').onchange = event => upload(event.target.files[0]);
   $('choose').onclick = () => $('file').click();

@@ -43,8 +43,8 @@
     failedHistories: new Set(), restoredFrom: null, restoredModel: null, designRecipe: null,
     contexts: new Map(), contextLoads: new Map(), streamDraft: null, switchingInput: false };
   flow.voiceDraft = { main: ReferencePrep.fresh(), extraReferences: [] };
-  const formIds = ['text', 'direction', 'language', 'seed', 'duration',
-    'target-seconds', 'max-chars', 'temperature', 'top-p', 'top-k', 'candidate-count', 'chunks',
+  const formIds = ['text', 'direction', 'language', 'seed',
+    'max-chars', 'temperature', 'top-p', 'top-k', 'candidate-count', 'chunks',
     'source-take', 'previous-take', 'start-time', 'end-time', 'start-frame', 'end-frame'];
   let saveTimer;
   function fail(error, source = 'action') {
@@ -59,7 +59,7 @@
   async function guarded(action) {
     try { clearError(); await action(); } catch (error) { fail(error); }
   }
-  function settings({ checkDuration = false, scene = false } = {}) {
+  function settings({ scene = false } = {}) {
     const control = id => $(scene ? `scene-${id}` : id);
     for (const id of ['max-chars', 'temperature', 'top-p', 'top-k',
       ...(scene ? [] : ['candidate-count'])]) {
@@ -71,14 +71,9 @@
       max_chunk_chars: Math.round(UiNumber.read(control('max-chars'))),
       temperature: UiNumber.read(control('temperature')), top_p: UiNumber.read(control('top-p')),
       top_k: UiNumber.read(control('top-k')),
+      silence_retry: control('silence-retry').checked,
     };
     if (!(values.temperature > 0 && values.top_p > 0)) throw new Error(t('Check generation settings.'));
-    const duration = $('target-seconds');
-    if (checkDuration && !$('duration').disabled && duration.value) {
-      if (!duration.checkValidity()) {
-        throw new Error(t('Target duration exceeds the maximum generation length'));
-      }
-    }
     if (!control('random-seed').checked && (!control('seed').checkValidity() || !control('seed').value)) {
       throw new Error(t('Check generation settings.'));
     }
@@ -91,7 +86,7 @@
     const task = flow.referenceTask;
     if (task) Object.assign(form, { 'previous-take': task.previous, 'source-take': task.source });
     return { context: copy(flow.single), form, mode: task?.mode || $('mode').value,
-      random: $('random-seed').checked, progressive: $('progressive-audio').checked,
+      random: $('random-seed').checked, silenceRetry: $('silence-retry').checked,
       autoplay: $('autoplay-audio').checked, streamLive: $('stream-live').checked,
       streamDraft: copy(flow.streamDraft),
       operation: copy(task ? task.operation : flow.operation), returnDrafts: copy(flow.returnDrafts.slice(-4)),
@@ -114,7 +109,7 @@
   function sceneSnapshot() {
     return { ...copy(flow.scene), script: $('dialogue-script').value, scriptVersion: 1,
       active_job_id: state.resultJobs.scene?.id || null,
-      generation: { random: $('scene-random-seed').checked, form: Object.fromEntries(
+      generation: { random: $('scene-random-seed').checked, silenceRetry: $('scene-silence-retry').checked, form: Object.fromEntries(
         ['seed', 'max-chars', 'temperature', 'top-p', 'top-k']
           .map(id => [id, UiNumber.value($(`scene-${id}`))])) } };
   }
@@ -202,7 +197,7 @@
       $('apply-asr-text').classList.toggle('hidden', !recognition.needsApply);
       renderTranscriptionStatus();
       $('random-seed').checked = value.random !== false;
-      $('progressive-audio').checked = Boolean(value.progressive);
+      $('silence-retry').checked = value.silenceRetry !== false;
       $('autoplay-audio').checked = Boolean(value.autoplay);
       $('stream-live').checked = Boolean(value.streamLive);
       $('mode').value = value.mode || 'tts'; updateMode(); updateEditorMeta(); enhanceAllSelects();
@@ -385,7 +380,6 @@
       $('direction').value = action === 'revision' ? '' : recipe.direction || '';
       $('language').value = recipe.language || '';
       if (recipe.max_chunk_chars !== undefined) UiNumber.write($('max-chars'), recipe.max_chunk_chars);
-      UiNumber.write($('target-seconds'), recipe.duration_frames ? recipe.duration_frames * 2048 / 44100 : '');
       if (recipe.seed !== undefined) $('seed').value = recipe.seed;
       for (const [key, id] of [['temperature', 'temperature'], ['top_p', 'top-p'], ['top_k', 'top-k']]) {
         if (recipe[key] !== undefined) UiNumber.write($(id), recipe[key]);
@@ -415,6 +409,7 @@
     if (value.generation) {
       for (const [id, text] of Object.entries(value.generation.form)) if ($(`scene-${id}`)) UiNumber.restore($(`scene-${id}`), text);
       $('scene-random-seed').checked = value.generation.random;
+      $('scene-silence-retry').checked = value.generation.silenceRetry !== false;
     }
     renderScene(); ScriptEditor.reset($('dialogue-script')); updateStrategy(); renderSceneOperation(); saveSoon();
   }
@@ -549,45 +544,6 @@
     const more = menu('More', items); more.classList.add('result-more'); group.append(more);
     return group;
   }
-  function afterResults(job, box, segments) {
-    if (job.mode !== 'audio_stream' || !segments.length) return;
-    box.querySelector('.segment-list').classList.add('hidden');
-    let area = box.querySelector('.progressive-player');
-    if (!area) {
-      area = node('div', 'progressive-player');
-      area.append(localized('span', 'field-help', 'Live audio'));
-      const audio = node('audio'); audio.controls = true; audio.preload = 'metadata';
-      area.append(audio); box.prepend(area);
-      const player = { audio, index: 0, playing: false, waiting: false, rows: [] };
-      area.player = player;
-      const advance = () => {
-        if (player.index >= player.rows.length) { player.waiting = true; return; }
-        player.waiting = false;
-        audio.src = fileUrl(player.rows[player.index].path || player.rows[player.index].output);
-        if (player.playing) audio.play().catch(() => { player.playing = false; });
-      };
-      player.advance = advance;
-      audio.addEventListener('play', () => { player.playing = true; });
-      audio.addEventListener('pause', () => { if (!audio.ended) player.playing = false; });
-      audio.addEventListener('ended', () => { player.index++; player.playing = true; advance(); });
-      player.playing = $('autoplay-audio').checked;
-    }
-    const player = area.player;
-    const first = !player.rows.length; player.rows = segments;
-    if (first || player.waiting) player.advance();
-    if (job.output && !area.hidden) {
-      const final = box.querySelector('.main-result audio');
-      const position = segments.slice(0, player.index).reduce((total, row) =>
-        total + (row.samples || 0) / (row.sample_rate || 44100), 0) + player.audio.currentTime;
-      const playing = !player.audio.paused;
-      player.audio.pause(); area.hidden = true;
-      const resume = () => {
-        final.currentTime = Math.min(position, final.duration || position);
-        if (playing) final.play().catch(() => {});
-      };
-      if (final.readyState >= 1) resume(); else final.addEventListener('loadedmetadata', resume, { once: true });
-    }
-  }
   function enhanceResult(job, main) {
     const bar = main.querySelector('.result-actions');
     const signature = `${job.id}:${state.capabilities?.director_revision}:${state.capabilities?.infill}`;
@@ -610,6 +566,11 @@
       const choose = command('Use this voice', () => guarded(() => saveVoice(source, true, resultBox)));
       choose.classList.add('creative-action'); bar.prepend(choose);
     }
+  }
+  function afterResults(job, box) {
+    if (job.status !== 'complete' || !job.output || box.dataset.autoplayJob === job.id) return;
+    box.dataset.autoplayJob = job.id;
+    if ($('autoplay-audio').checked) box.querySelector('.main-result audio')?.play().catch(() => {});
   }
   function enhanceSegment(job, segment, row, index) {
     if (!segment.take_file) return;
@@ -709,9 +670,8 @@
       if (recipe[key] !== undefined) UiNumber.write(control(id), recipe[key]);
     }
     if (recipe.seed !== undefined) control('random-seed').checked = false;
+    control('silence-retry').checked = recipe.silence_retry !== false;
     if (scene) return;
-    $('duration').value = recipe.duration_frames || '';
-    UiNumber.write($('target-seconds'), recipe.duration_frames ? recipe.duration_frames * 2048 / 44100 : '');
     $('language').value = recipe.language || ''; $('candidate-count').value = 1;
   }
   const preparedReference = reference => ({
@@ -771,7 +731,6 @@
       flow.single = { ...(Object.keys(draftStudio).length ? draftStudio : fresh('single')), layout: 'single' }; flow.operation = null;
       flow.restoredFrom = source; flow.restoredModel = recipe.model || null;
       $('mode').value = ['audio_stream', 'stream'].includes(recipe.mode) ? 'tts' : recipe.mode || 'tts';
-      $('progressive-audio').checked = recipe.mode === 'audio_stream';
       $('text').value = version.text; $('direction').value = recipe.direction || '';
       $('previous-take').value = recipe.previous_take || ''; $('source-take').value = recipe.source_take || '';
       if (recipe.mode === 'infill') {
@@ -989,7 +948,6 @@
     document.querySelector('#infill-source-preview .edit-source-heading').append($('inspect-infill-source'));
     const controls = node('div', 'field-grid');
     for (const [id, label, value, step, min, max] of [
-      ['target-seconds', 'Target duration (seconds)', '', 'any', '.01', '95.109'],
       ['max-chars', 'Text chunk target', '160', '1', '80', '320'],
       ['temperature', 'Temperature', '0.8', 'any', '0', '2'],
       ['top-p', 'Top P', '.8', 'any', '0', '1'],
@@ -1000,31 +958,15 @@
       controls.append(field(label, control));
     }
     $('advanced-settings').querySelector('.advanced-content').prepend(controls);
-    const exact = node('details', 'source-details');
-    const exactTitle = node('summary', '', t('Frame limits')); exactTitle.dataset.i18n = 'Frame limits';
-    const frameFields = node('div', 'field-grid');
-    const previousGrid = $('duration').parentElement.parentElement;
-    frameFields.append($('duration').parentElement);
-    internal.append($('max-frames').parentElement);
-    previousGrid.classList.remove('three');
-    exact.append(exactTitle, frameFields); $('advanced-settings').append(exact);
-    $('target-seconds').addEventListener('input', () => {
-      $('duration').value = $('target-seconds').value ? Math.round(Number($('target-seconds').value) * 44100 / 2048) : '';
-    });
-    $('duration').addEventListener('input', () => {
-      UiNumber.write($('target-seconds'), $('duration').value ? Number($('duration').value) * 2048 / 44100 : '');
-    });
     const random = input('random-seed', '', 'checkbox'); random.checked = true;
     const randomLabel = node('label', 'check-field'); randomLabel.append(random, node('span', '', t('Random seed')));
     randomLabel.lastChild.dataset.i18n = 'Random seed';
     $('seed').parentElement.append(randomLabel);
-    const progressive = input('progressive-audio', '', 'checkbox');
-    const progressiveLabel = node('label', 'check-field'); progressiveLabel.append(progressive, node('span', '', t('Progressive playback')));
-    progressiveLabel.lastChild.dataset.i18n = 'Progressive playback';
+    const silenceRetry = silenceRetryField('silence-retry');
     const autoplay = input('autoplay-audio', '', 'checkbox');
     const autoplayLabel = node('label', 'check-field'); autoplayLabel.append(autoplay, node('span', '', t('Autoplay generated audio')));
     autoplayLabel.lastChild.dataset.i18n = 'Autoplay generated audio';
-    $('advanced-settings').querySelector('.advanced-content').append(progressiveLabel, autoplayLabel);
+    $('advanced-settings').querySelector('.advanced-content').append(silenceRetry, autoplayLabel);
     const diff = node('div', 'transcript-diff'); diff.id = 'transcript-diff'; diff.hidden = true;
     $('text').closest('.editor-area').after(diff);
     ScriptEditor.mount($('text')); ScriptEditor.mount($('chunks'));
@@ -1088,8 +1030,9 @@
     if (!design && !flow.operation && !syncCloneAudioSelection()) {
       throw new Error($('clone-note').textContent);
     }
-    const common = settings({ checkDuration: !design });
+    const common = settings();
     delete payload.max_new_tokens;
+    delete payload.duration_frames;
     if (design) {
       if (!state.capabilities?.voice_design) throw new Error(t('Not supported by this model'));
       const description = $('voice-description').value.trim();
@@ -1105,12 +1048,8 @@
     }
     const operation = copy(flow.operation), studio = copy(flow.single);
     const restoredFrom = copy(flow.restoredFrom), model = flow.restoredModel || state.model?.selected_directory;
-    const duration = UiNumber.value($('target-seconds')), progressive = $('progressive-audio').checked;
     const candidates = Number($('candidate-count').value || 1);
-    if (!$('duration').disabled && payload.mode !== 'stream') {
-      common.duration_frames = $('target-seconds').value
-        ? Math.max(1, Math.round(UiNumber.read($('target-seconds')) * 44100 / 2048)) : null;
-    }
+    common.duration_frames = null;
     if (operation && !operation.legacy) {
       if (operation.restoreError) throw new Error(t(operation.restoreError));
       return {
@@ -1136,11 +1075,6 @@
     payload.voice_bindings = payload.mode === 'infill' ? [] : await singleBindings(
       payload.uploaded_references ?? null, references);
     if (!['revision', 'edit'].includes(payload.mode)) delete payload.previous_take;
-    if (payload.mode !== 'stream' && duration) {
-      payload.duration_frames = Math.max(1, Math.round(Number(duration) * 44100 / 2048));
-      payload.single_chunk = true;
-    }
-    if (payload.mode === 'tts' && progressive) payload.mode = 'audio_stream';
     return payload;
   }
   async function referencePrewarmPayload() {
@@ -1162,6 +1096,14 @@
   }
   function sceneRole(name, speaker = 0) {
     return { ...ReferencePrep.fresh(), id: uid(), name, description: '', speaker, extraReferences: [] };
+  }
+  function silenceRetryField(id) {
+    const checkbox = input(id, '', 'checkbox'), label = node('label', 'check-field');
+    checkbox.checked = true;
+    label.append(checkbox, localized('span', '', 'Auto-retry silent chunks'));
+    label.dataset.i18nTitle = 'Retry chunks with over 5 seconds of near-silence, up to twice.';
+    label.title = t(label.dataset.i18nTitle);
+    return label;
   }
   function sceneLine(role) { return { id: uid(), characterId: role.id, text: '', direction: '' }; }
   function clearExtraReferences() {
@@ -1658,7 +1600,7 @@
     const random = input('scene-random-seed', '', 'checkbox'); random.checked = true;
     const randomLabel = node('label', 'check-field');
     randomLabel.append(random, localized('span', '', 'Random seed'));
-    fields.append(randomLabel); parameters.append(fields);
+    fields.append(randomLabel); parameters.append(fields, silenceRetryField('scene-silence-retry'));
     $('submit-scene').closest('.compose-footer').before(parameters);
     const supportNote = node('p', 'field-help'); supportNote.id = 'scene-capability-notice'; supportNote.hidden = true;
     $('submit-scene').closest('.compose-footer').before(supportNote);
@@ -1667,6 +1609,7 @@
         if ($(`scene-${id}`)) $(`scene-${id}`).value = value;
       }
       random.checked = flow.scene.generation.random !== false;
+      $('scene-silence-retry').checked = flow.scene.generation.silenceRetry !== false;
     }
     const back = command('Return to draft', () => {
       const previous = flow.scene.returnDrafts?.pop(), rest = copy(flow.scene.returnDrafts || []);
@@ -1752,7 +1695,7 @@
     $('back-to-generation').hidden = !design;
   }
   function syncControls() {
-    if (!$('target-seconds')) return;
+    if (!$('silence-retry')) return;
     const caps = state.capabilities || {}, mode = $('mode').value;
     renderCloneSummary();
     const monitored = knownJob(state.monitoredJobId);
@@ -1777,15 +1720,10 @@
     renderTaskDetails();
     renderFrozenVoice();
     renderVoiceSource();
-    $('target-seconds').disabled = $('duration').disabled;
-    $('target-seconds').parentElement.hidden = $('duration').disabled;
     $('language').parentElement.hidden = $('language').disabled;
     document.querySelector('.performance-fields').hidden = $('direction').disabled;
-    const targetLabel = document.querySelector('label[for="target-seconds"]');
-    targetLabel.dataset.i18n = mode === 'infill' ? 'Replacement duration (seconds)' : 'Target duration (seconds)';
-    targetLabel.textContent = t(targetLabel.dataset.i18n);
-    $('progressive-audio').disabled = !caps.streaming_audio || mode !== 'tts' || Boolean(flow.operation) || design;
-    $('progressive-audio').parentElement.hidden = $('progressive-audio').disabled;
+    $('silence-retry').disabled = busy;
+    $('scene-silence-retry').disabled = busy;
     $('describe-voice').disabled = busy || mode !== 'tts' || Boolean(flow.operation) || (!design && !caps.voice_design);
     $('back-to-generation').disabled = busy;
     $('return-draft').disabled = flow.switchingInput;
@@ -1885,7 +1823,7 @@
     scriptLabel.before(performance);
     $('direction').dataset.i18nPlaceholder = 'optional'; $('direction').placeholder = t('optional');
     const seedField = $('seed').parentElement, formerSeedRow = seedField.parentElement;
-    $('temperature').parentElement.parentElement.append(seedField);
+    $('candidate-count').parentElement.before(seedField);
     formerSeedRow.hidden = true;
     const makeDock = (buttonId, settingsId, noteId) => {
       const primary = $(buttonId), footer = primary.closest('.compose-footer');
@@ -2026,6 +1964,7 @@
         if ($(`scene-${id}`)) UiNumber.restore($(`scene-${id}`), value);
       }
       $('scene-random-seed').checked = savedScene.generation.random !== false;
+      $('scene-silence-retry').checked = savedScene.generation.silenceRetry !== false;
     } else {
       $('scene-temperature').value = state.model?.runtime === 'gguf' ? '1' : '.7';
       $('scene-top-p').value = state.model?.runtime === 'gguf' ? '.9' : '.7';

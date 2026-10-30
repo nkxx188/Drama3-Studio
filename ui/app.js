@@ -124,6 +124,16 @@ function stageLabel(stage) {
     error: 'Error', update: 'Update' };
   return stage ? t(labels[stage] || stage.replaceAll('_', ' ')) : '';
 }
+function jobIssue(job) {
+  return job.error ? message(job.error) : job.result?.silence_retry?.exhausted
+    ? t('Long silence remained after two retries. Check the audio or try again.') : '';
+}
+function retryStage(job) {
+  const last = (job.events || []).at(-1);
+  const retry = (job.events || []).findLast(event => event.stage === 'silence_retry');
+  return retry && retry.chunk === last?.chunk && retry.line === last?.line
+    ? t('Silent chunk detected. Retrying {retry}/{max}…', { retry: retry.retry, max: retry.max_retries }) : '';
+}
 const fileUrl = path => {
   const value = String(path || '').replaceAll('\\', '/');
   if (value.startsWith('/files/')) return value;
@@ -1372,9 +1382,8 @@ function payloadFromForm() {
     direction: $('direction').disabled ? '' : $('direction').value,
     language: $('language').disabled ? null : $('language').value || null,
     previous_take: $('previous-take').disabled ? null : $('previous-take').value || null,
-    seed: Number($('seed').value || 123), max_new_tokens: Number($('max-frames').value || 768),
+    seed: Number($('seed').value || 123), automatic_length: true,
   };
-  if (!$('duration').disabled && $('duration').value) payload.duration_frames = Number($('duration').value);
   if (mode === 'stream') {
     payload.chunks = $('chunks').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
     payload.live_stream = $('stream-live').checked; payload.text = payload.chunks.join('\n');
@@ -1514,11 +1523,11 @@ function renderJob(job) {
   const phaseLabel = { model_load: 'Loading model', initialization: 'Initializing',
     waiting: 'Waiting for text', generation: 'Generating' }[timing.phase];
   $('progress-stage').textContent = active
-    ? job.status === 'queued' ? t('Queued') : phaseLabel ? t(phaseLabel) : stageLabel(last.stage) || t('Generating')
+    ? job.status === 'queued' ? t('Queued') : retryStage(job) || (phaseLabel ? t(phaseLabel) : stageLabel(last.stage) || t('Generating'))
     : '';
   $('progress-count').textContent = !active || timing.phase === 'generation' ? generationTimeLabel(job) : '';
-  $('result-error').hidden = !job.error;
-  $('result-error').textContent = job.error ? message(job.error) : '';
+  $('result-error').hidden = !jobIssue(job);
+  $('result-error').textContent = jobIssue(job);
   renderResults(job);
   const hasAudio = ! $('result-box').classList.contains('hidden');
   $('output-placeholder').hidden = hasAudio;
@@ -1650,7 +1659,6 @@ function updateMode() {
   $('clear-text').disabled = $('text').disabled || $('text').readOnly;
   $('direction').disabled = ['stream', 'infill'].includes(mode) || state.capabilities?.direction === false;
   $('language').disabled = design || ['stream', 'infill'].includes(mode) || state.capabilities?.language_hint === false;
-  $('duration').disabled = design || mode === 'stream' || state.capabilities?.duration_hint === false;
   $('previous-take').disabled = design || ['stream', 'infill'].includes(mode) || state.capabilities?.director_revision === false;
   $('inspect-previous-source').disabled = $('previous-take').disabled;
   if (['revision', 'edit'].includes(mode) && $('previous-take').value

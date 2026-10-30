@@ -51,6 +51,69 @@ def test_long_tts_keeps_real_first_and_recent_chunk_anchors(tmp_path):
     assert metadata["spoken_text"] == "One. Two. Three."
 
 
+def test_native_silence_retry_keeps_good_chunks_and_never_conditions_on_bad_audio(tmp_path):
+    class SilentNative(Native):
+        def generate(self, text, output, **kwargs):
+            self.calls.append((text, kwargs))
+            bad = len(self.calls) == 2
+            marker, count = (7, 120) if bad else (len(self.calls), 4)
+            codes = torch.full((10, count), marker, dtype=torch.int64)
+            take = save_native_take(output, PreviousTake(text, codes))
+            write_wav(torch.full((count * 2048,), 0.0 if bad else .1), output)
+            return {"status": "incomplete" if bad else "complete", "output": str(output),
+                    "take_file": str(take), "audio": {"samples": count * 2048, "sample_rate": 44100}}
+
+    engine, events = SilentNative(), []
+    result = GGUFWorkflows(engine).run(
+        "tts", "One. Two. Three.", tmp_path / "retry.wav", max_chunk_chars=6,
+        seed=123, silence_retry=True, progress=events.append)
+    assert result["status"] == "complete"
+    assert result["silence_retry"] == {"retries": 1, "exhausted": False}
+    assert len(engine.calls) == 4 and [text for text, _ in engine.calls][1:3] == ["<|speaker:0|>Two. "] * 2
+    assert engine.calls[1][1]["seed"] != engine.calls[2][1]["seed"]
+    assert torch.equal(engine.calls[3][1]["previous_takes"][-1].codes,
+                       torch.full((10, 4), 3, dtype=torch.int64))
+    take, _, chunks = load_native_take(result["take_file"])
+    assert len(chunks) == 3 and take.codes.shape == (10, 12)
+    assert not bool((take.codes == 7).any())
+    assert [event["retry"] for event in events if event["stage"] == "silence_retry"] == [1]
+
+
+def test_native_silent_eos_cannot_publish_success_after_exhausted_retries(tmp_path):
+    class SilentNative(Native):
+        def generate(self, text, output, **kwargs):
+            self.calls.append((text, kwargs))
+            codes = torch.ones(10, 120, dtype=torch.int64)
+            take = save_native_take(output, PreviousTake(text, codes))
+            write_wav(torch.zeros(120 * 2048), output)
+            return {"status": "complete", "output": str(output), "take_file": str(take),
+                    "audio": {"samples": 120 * 2048, "sample_rate": 44100}}
+    engine = SilentNative()
+    result = GGUFWorkflows(engine).run("tts", "Hello.", tmp_path / "silent.wav", silence_retry=True)
+    assert len(engine.calls) == 3 and result["status"] == "incomplete"
+    assert result["silence_retry"] == {"retries": 2, "exhausted": True}
+    assert result["take_file"] is None and Path(result["output"]).is_file()
+
+
+def test_native_infill_checks_only_the_generated_middle(tmp_path):
+    class InfillNative(Native):
+        def generate(self, text, output, **kwargs):
+            result = super().generate(text, output, **kwargs)
+            span = kwargs["infill"]
+            samples = result["audio"]["samples"]
+            audio = torch.zeros(samples)
+            audio[span.start * 2048:span.start * 2048 + 4 * 2048] = .1
+            write_wav(audio, output)
+            return result
+    engine = InfillNative()
+    result = GGUFWorkflows(engine).run(
+        "infill", "Revised.", tmp_path / "infill.wav",
+        infill=InfillSpan(torch.zeros(10, 280, dtype=torch.int64), 140, 141),
+        silence_retry=True)
+    assert result["status"] == "complete" and len(engine.calls) == 1
+    assert result["silence_retry"] == {"retries": 0, "exhausted": False}
+
+
 def test_lookahead_session_and_scene_share_native_takes_without_python_model(tmp_path):
     engine = Native()
     stream = TextStreamSession(GGUFWorkflows(engine), tmp_path / "stream")

@@ -835,6 +835,8 @@ class AppState:
 
     @staticmethod
     def _validate_sampling(payload):
+        if "silence_retry" in payload and not isinstance(payload["silence_retry"], bool):
+            raise ValueError("silence_retry must be a boolean")
         for key, low, high in (("seed", 0, 2**32 - 1), ("max_new_tokens", 1, 2048),
                                ("top_k", 0, 8193), ("candidates", 1, 3)):
             if key in payload:
@@ -1553,7 +1555,7 @@ class AppState:
             raise ValueError("Unknown creative operation")
         for key in (
             "temperature", "top_k", "top_p", "max_new_tokens",
-            "max_chunk_chars", "duration_frames", "automatic_length",
+            "max_chunk_chars", "duration_frames", "automatic_length", "silence_retry",
         ):
             if key in payload:
                 original[key] = payload[key]
@@ -1736,6 +1738,12 @@ class AppState:
 
         if not isinstance(payload, dict):
             raise ValueError("Audio edit request must be an object")
+        payload = clone(payload)
+        automatic_length = payload.pop("automatic_length", False)
+        if not isinstance(automatic_length, bool):
+            raise ValueError("automatic_length must be a boolean")
+        if automatic_length:
+            payload["max_new_tokens"] = 2048
         upload = self.reference_upload(payload.get("upload_id"))
         reference = VoiceReference(upload["audio_path"], payload.get("original_transcript"), 0)
         reference.transcript()
@@ -1796,7 +1804,11 @@ class AppState:
                 "temperature": payload.get("temperature", 1.0 if native else .7),
                 "top_k": payload.get("top_k", 0), "top_p": payload.get("top_p", .9 if native else .7),
                 "duration_frames": payload.get("duration_frames"),
+                "silence_retry": payload.get("silence_retry", False),
             }
+            if automatic_length:
+                recipe["max_new_tokens"] = _automatic_generation_limit(recipe)
+                recipe["length_policy"] = "automatic-v1"
             if operation == "infill":
                 recipe.update(start_frame=start, end_frame=end)
                 recipe.pop("direction")
@@ -2387,6 +2399,7 @@ class AppState:
                     if payload.get("duration_frames") not in (None, "") else None),
                 "references": references,
                 "previous_takes": previous,
+                "silence_retry": payload.get("silence_retry", False),
                 "progress": self._progress(job_id),
                 "cancelled": cancel,
             }
@@ -2414,6 +2427,7 @@ class AppState:
                     seed=common["seed"], max_new_tokens=common["max_new_tokens"],
                     max_chunk_chars=common["max_chunk_chars"],
                     strategy=payload.get("scene_strategy", "per_line"),
+                    silence_retry=common["silence_retry"],
                     **{key: common[key] for key in ("temperature", "top_k", "top_p") if key in common})
                 try:
                     for row in session.run(progress=self._progress(job_id), cancelled=cancel):
@@ -2491,6 +2505,7 @@ class AppState:
                         segment_ready=lambda row: self._event(job_id, {"stage": "audio", **row}))
                     result["mode"] = "audio_stream"
                 else:
+                    common.pop("silence_retry", None)
                     session = AudioStreamSession(
                         engine, str(payload.get("text", "")), output,
                         references=references, previous_takes=previous,

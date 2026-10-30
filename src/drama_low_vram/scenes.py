@@ -22,12 +22,14 @@ from .protocols import (
 from .workflows import DramaWorkflows, load_take, save_take
 from .sampling import DEFAULT_TOP_K
 from .text_chunks import _content_width
+from .silence_retry import retry_summary
 
 
 class SceneSession:
     def __init__(self, engine, output, *, scene, characters, lines, references=(),
                  direction="", seed=123, max_new_tokens=768, max_chunk_chars=160,
-                 strategy="per_line", temperature=None, top_k=DEFAULT_TOP_K, top_p=None):
+                 strategy="per_line", temperature=None, top_k=DEFAULT_TOP_K, top_p=None,
+                 silence_retry=False):
         validate_scene_inputs(scene, characters, lines)
         validate_content(direction, "scene direction", empty=True)
         voices = {character.speaker for character in characters}
@@ -56,6 +58,9 @@ class SceneSession:
             raise ValueError("Scene strategy must be joint or per_line")
         self.strategy = strategy
         self.sampling = {"top_k": top_k}
+        if not isinstance(silence_retry, bool):
+            raise ValueError("silence_retry must be a boolean")
+        self.sampling["silence_retry"] = silence_retry
         if temperature is not None:
             self.sampling["temperature"] = temperature
         if top_p is not None:
@@ -100,7 +105,7 @@ class SceneSession:
         directory = self.output.with_name(self.output.stem + ".lines")
         directory.mkdir(exist_ok=True)
         started, position, first, recent = time.perf_counter(), 0, {}, {}
-        first_sources, recent_sources = {}, {}
+        first_sources, recent_sources, retry_reports = {}, {}, []
         by_name = {character.name: character for character in self.characters}
         with self.engine._lock:
             try:
@@ -191,6 +196,7 @@ class SceneSession:
                                 "script": [asdict(line) for line in self.lines],
                                 "direction": self.direction, "segments": [],
                                 "chunks": batch_reports,
+                                "silence_retry": retry_summary(batch_reports),
                                 "samples": joint_samples,
                             }
                             position = joint_samples
@@ -207,6 +213,7 @@ class SceneSession:
                         "characters": [asdict(role) for role in self.characters],
                         "script": [asdict(line) for line in self.lines],
                         "direction": self.direction, "segments": [], "chunks": batch_reports,
+                        "silence_retry": retry_summary(batch_reports),
                         "total_seconds": time.perf_counter() - started,
                     }
                     return
@@ -242,6 +249,8 @@ class SceneSession:
                         seed=(self.seed + index) % 2**64, max_new_tokens=self.maximum,
                         max_chunk_chars=self.max_chunk_chars, progress=events, cancelled=cancelled,
                         **self.sampling)
+                    if result.get("silence_retry"):
+                        retry_reports.append({"silence_retry": result["silence_retry"]})
                     if result["status"] != "complete":
                         self.status = result["status"]
                         break
@@ -305,6 +314,7 @@ class SceneSession:
                     "segments": self.results, "sample_rate": 44100, "samples": position,
                     "duration_seconds": position / 44100,
                     "total_seconds": time.perf_counter() - started,
+                    "silence_retry": retry_summary(retry_reports),
                 }
                 self.output.with_suffix(".json").write_text(
                     json.dumps(self.report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

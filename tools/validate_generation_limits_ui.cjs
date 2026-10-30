@@ -39,9 +39,10 @@ const check = (name, value) => {
       await page.locator('.nav[data-view="generate"]').click();
       await openSettings('#advanced-settings');
       check(`no_regular_duration_cap_${locale}`,
-        !await page.locator('#max-seconds').count() && !await page.locator('#max-frames').isVisible());
+        !await page.locator('#max-seconds,#max-frames,#duration').count());
       check(`regular_chunk_target_kept_${locale}`, await page.locator('#max-chars').isVisible());
-      check(`target_duration_kept_${locale}`, await page.locator('#target-seconds').isVisible());
+      check(`duration_hint_removed_${locale}`, !await page.locator('#target-seconds').count());
+      check(`silence_retry_available_${locale}`, await page.locator('#silence-retry').isVisible());
       await page.locator('.nav[data-view="scene"]').click();
       await openSettings('#scene-generation-settings');
       check(`no_joint_duration_cap_${locale}`, !await page.locator('#scene-max-seconds').count());

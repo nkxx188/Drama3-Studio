@@ -24,6 +24,7 @@ from .protocols import (
 )
 from .text_chunks import split_text
 from .sampling import DEFAULT_TOP_K
+from .silence_retry import run_with_silence_retry, silent_span, retry_summary
 
 
 def _history_variants(previous_takes, first_chunk, latest_chunk):
@@ -156,9 +157,12 @@ class DramaWorkflows:
         cancelled: Callable[[], bool] | None = None,
         segment_ready: Callable[[dict], None] | None = None,
         single_chunk: bool = False, voice_description: str = "", character_name: str = "Voice",
+        silence_retry: bool = False,
     ):
         if mode not in ("tts", "revision", "edit", "infill", "scene", "stream", "design"):
             raise ValueError("Unknown Drama3 workflow")
+        if not isinstance(silence_retry, bool):
+            raise ValueError("silence_retry must be a boolean")
         if mode == "design":
             design_character(character_name, voice_description, scene)
             if references or previous_takes:
@@ -281,15 +285,6 @@ class DramaWorkflows:
                         directed_text(chunk, direction, language=language, duration_frames=duration_frames)
                         if direction or language is not None or duration_frames is not None else chunk
                     )
-                if progress:
-                    progress({"stage": "prepare", "chunk": index + 1, "chunks": len(chunks),
-                              "prompt_rows": len(prompt)})
-                prepare_started = time.perf_counter()
-                plan, error = engine._prepare(len(prompt) + max_new_tokens, output_controls=controls)
-                prepare_seconds = time.perf_counter() - prepare_started
-                if progress:
-                    progress({"stage": "prefill", "chunk": index + 1, "chunks": len(chunks)})
-                seed_sampling((seed + index) % 2**64)
                 control_head = getattr(engine.model.backbone, "protocol_head", None) if controls else None
 
                 def frame_progress(count, limit):
@@ -297,31 +292,78 @@ class DramaWorkflows:
                         progress({"stage": "generate", "chunk": index + 1,
                                   "chunks": len(chunks), "frames": count, "limit": limit})
 
-                result = generate(
-                    engine.model, prompt, max_new_tokens=max_new_tokens,
-                    prefill_chunk_size=plan.prefill_chunk, temperature=temperature,
-                    top_k=top_k, top_p=top_p, tower_graph=engine.graph,
-                    backbone_graph=engine.backbone_graph, progress=frame_progress,
-                    cancelled=cancelled,
-                    prefix_cache=engine.prefix_cache
-                    if mode in ("tts", "revision", "edit", "stream") else None,
-                    logit_head=(
-                        (lambda hidden: control_head.logits(hidden, engine.model.backbone.lm_head))
-                        if control_head is not None else None),
-                    control_token_ids=(separator_id,) if separator_id is not None else (),
-                    candidate_ids=engine._task_candidates,
-                    allow_prefill_fallback=engine.options.prefill_chunk is None,
-                )
-                engine._remember_prefill_chunk(result.prefix_cache)
-                plan = engine._ready_plan or plan
+                def attempt(run_seed):
+                    if progress:
+                        progress({"stage": "prepare", "chunk": index + 1, "chunks": len(chunks),
+                                  "prompt_rows": len(prompt)})
+                    prepare_started = time.perf_counter()
+                    plan, error = engine._prepare(len(prompt) + max_new_tokens, output_controls=controls)
+                    prepare_seconds = time.perf_counter() - prepare_started
+                    if progress:
+                        progress({"stage": "prefill", "chunk": index + 1, "chunks": len(chunks)})
+                    seed_sampling(run_seed)
+                    result = generate(
+                        engine.model, prompt, max_new_tokens=max_new_tokens,
+                        prefill_chunk_size=plan.prefill_chunk, temperature=temperature,
+                        top_k=top_k, top_p=top_p, tower_graph=engine.graph,
+                        backbone_graph=engine.backbone_graph, progress=frame_progress,
+                        cancelled=cancelled,
+                        prefix_cache=engine.prefix_cache
+                        if mode in ("tts", "revision", "edit", "stream") else None,
+                        logit_head=(
+                            (lambda hidden: control_head.logits(hidden, engine.model.backbone.lm_head))
+                            if control_head is not None else None),
+                        control_token_ids=(separator_id,) if separator_id is not None else (),
+                        candidate_ids=engine._task_candidates,
+                        allow_prefill_fallback=engine.options.prefill_chunk is None,
+                    )
+                    engine._remember_prefill_chunk(result.prefix_cache)
+                    return {"result": result, "plan": engine._ready_plan or plan,
+                            "error": error, "prepare_seconds": prepare_seconds, "audio": None}
+
+                def inspect_audio(value):
+                    result = value["result"]
+                    if result.finish_reason == "cancelled" or not len(result.frames):
+                        return None
+                    parts, _ = audio_segments(result.frames, config, separator_id)
+                    if mode == "scene" and len(parts) != len(lines):
+                        return None
+                    codes = torch.cat(parts, dim=1)
+                    # Only the generated middle is inspected for infill. The
+                    # source prefix/suffix are immutable and may contain silence.
+                    if mode == "infill" and result.finish_reason == "eos":
+                        codes = infill.join(codes, config)
+                    if codes.shape[1] > engine.options.codec_max_frames:
+                        raise ValueError("Decoded chunk exceeds this engine's codec frame budget")
+                    if progress:
+                        progress({"stage": "decode", "chunk": index + 1, "chunks": len(chunks)})
+                    audio = value["audio"] = engine._decode_audio_segments([codes])
+                    if mode == "infill" and result.finish_reason == "eos":
+                        prefix, suffix = infill.parts(config)
+                        end = audio.numel() - suffix.shape[1] * 2048
+                        audio = audio[prefix.shape[1] * 2048:end]
+                    return silent_span(audio)
+
+                accepted, retry = run_with_silence_retry(
+                    attempt, inspect_audio, seed=(seed + index) % 2**64, enabled=silence_retry,
+                    cancelled=cancelled, on_retry=lambda event: progress and progress({
+                        **event, "chunk": index + 1, "chunks": len(chunks)}))
+                result, plan, error = accepted["result"], accepted["plan"], accepted["error"]
                 record = {
                     **result.as_dict(), "text": user_text, "prompt_rows": len(prompt),
-                    "runtime_prepare_seconds": prepare_seconds,
+                    "runtime_prepare_seconds": accepted["prepare_seconds"],
                     "runtime_prepare_breakdown": dict(engine._last_prepare_timing),
                     "runtime_plan": plan.as_dict(), "graph_warning": error,
+                    **({"silence_retry": retry} if retry else {}),
                 }
                 records.append(record)
                 all_frames.append(result.frames)
+                if retry and retry["exhausted"]:
+                    status = "incomplete"
+                    diagnostic = output.with_name(f"{output.stem}.silent-chunk-{index + 1:04d}.wav")
+                    write_wav(accepted["audio"], diagnostic)
+                    record["diagnostic_audio"] = str(diagnostic)
+                    break
                 if result.finish_reason != "eos" or (not len(result.frames) and mode != "infill"):
                     status = "cancelled" if result.finish_reason == "cancelled" else "incomplete"
                     break
@@ -356,6 +398,11 @@ class DramaWorkflows:
                 record["code_sha256"] = hashlib.sha256(codes.numpy().tobytes()).hexdigest()
                 record["separator_rows"] = separators
                 generated.append(codes)
+                if silence_retry:
+                    # Reuse the waveform that passed inspection; do not run
+                    # the codec again when assembling the completed long audio.
+                    previews.append(accepted["audio"] if accepted["audio"] is not None
+                                    else engine._decode_audio_segments([codes]))
                 take = PreviousTake(user_text, codes, lookahead if mode == "stream" else None)
                 history.append(take)
                 if first_chunk is None:
@@ -363,7 +410,7 @@ class DramaWorkflows:
                 if segment_ready is not None and mode != "infill":
                     if progress:
                         progress({"stage": "decode", "chunk": index + 1, "chunks": len(chunks)})
-                    audio = engine._decode_audio_segments([codes])
+                    audio = previews[-1] if silence_retry else engine._decode_audio_segments([codes])
                     preview_path = output.with_name(f"{output.stem}.part-{index + 1:04d}.wav")
                     write_wav(audio, preview_path)
                     preview_take = save_take(
@@ -374,7 +421,8 @@ class DramaWorkflows:
                             **({"lookahead": lookahead} if mode == "stream" else {}),
                             "references": [asdict(reference) for reference in references],
                         })
-                    previews.append(audio)
+                    if not silence_retry:
+                        previews.append(audio)
                     segment_ready({
                         "index": index, "path": str(preview_path),
                         "take_file": str(preview_take),
@@ -421,6 +469,7 @@ class DramaWorkflows:
                 "take_file": str(take_file) if take_file else None,
                 "audio": audio_info, "chunks": records,
                 "reference_cache_hits": hits, "seed": seed,
+                "silence_retry": retry_summary(records),
                 "total_seconds": time.perf_counter() - started,
                 "lifecycle_delta": {key: engine._lifecycle[key] - lifecycle_before[key] for key in lifecycle_before},
                 "all_top8_preserved": True,

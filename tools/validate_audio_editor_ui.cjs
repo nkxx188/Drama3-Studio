@@ -178,7 +178,7 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
       && local.result.infill.suffix_codes_equal);
     check('sampling_and_exact_codec_frames_survive_two_decimal_display',
       local.recipe.temperature === basic.temperature && local.recipe.top_p === basic.top_p
-      && local.recipe.max_new_tokens === 777
+      && local.recipe.length_policy === 'automatic-v1'
       && local.recipe.start_frame === Math.round(selected.start * 44100 / 2048)
       && local.recipe.end_frame === Math.round(selected.end * 44100 / 2048));
     await open(first.id);

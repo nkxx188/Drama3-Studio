@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--reference-switch-checks", action="store_true")
     parser.add_argument("--polish-checks", action="store_true")
     parser.add_argument("--result-controls-checks", action="store_true")
+    parser.add_argument("--generation-settings-checks", action="store_true")
     arguments = parser.parse_args()
     import numpy as np
     import soundfile as sf
@@ -60,6 +61,7 @@ def main():
         model_path = state.checkpoint
         options = SimpleNamespace(codec_max_frames=2048)
         _lock = RLock()
+        retry_calls = {}
 
         def load(self, **_kwargs):
             pass
@@ -79,12 +81,19 @@ def main():
             return self.references.get(str(path))
 
         def generate(self, text, output, **kwargs):
+            abnormal = False
+            if arguments.generation_settings_checks and "retry-fixture" in text:
+                self.retry_calls[text] = self.retry_calls.get(text, 0) + 1
+                abnormal = self.retry_calls[text] == 1
+            if arguments.generation_settings_checks and "exhausted-fixture" in text:
+                abnormal = True
             codes = torch.ones(10, frames, dtype=torch.int64)
             if kwargs.get("infill"):
                 span = kwargs["infill"]
                 codes = torch.cat((span.source[:, :span.start], codes[:, :16], span.source[:, span.end:]), dim=1)
             count = codes.shape[1]
-            write_wav(torch.tensor(np.resize(waveform, count * 2048), dtype=torch.float32), output)
+            audio = np.zeros(count * 2048) if abnormal else np.resize(waveform, count * 2048)
+            write_wav(torch.tensor(audio, dtype=torch.float32), output)
             saved = save_native_take(output, PreviousTake(text, codes))
             if kwargs.get("streaming_audio"):
                 for index, first in enumerate(range(0, count, 16)):
@@ -96,7 +105,7 @@ def main():
                         "end_sample": last * 2048, "samples": (last - first) * 2048, "sample_rate": rate,
                     })
                     time.sleep(.25)
-            return {"status": "complete", "output": str(output), "take_file": str(saved),
+            return {"status": "incomplete" if abnormal else "complete", "output": str(output), "take_file": str(saved),
                     "audio": {"samples": count * 2048, "sample_rate": rate}}
 
     engine = Synthetic()
@@ -168,6 +177,7 @@ def main():
         result = subprocess.run(
             [shutil.which("node") or "node", str(ROOT / "tools" / (
                 "validate_audio_import_ui.cjs" if arguments.audio_import_checks else
+                "validate_generation_settings_ui.cjs" if arguments.generation_settings_checks else
                 "validate_reference_switch_ui.cjs" if arguments.reference_switch_checks else
                 "validate_reference_prewarm_ui.cjs" if arguments.reference_prewarm_checks else
                 "validate_result_controls_ui.cjs" if arguments.result_controls_checks else

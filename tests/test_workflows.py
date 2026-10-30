@@ -244,3 +244,60 @@ def test_take_rejects_unknown_fields_and_expanded_zip_payload(runtime, tmp_path)
             archive.writestr(name, b"\0" * (34 * 1024**2))
     with pytest.raises(ValueError, match="expanded"):
         load_take(path, runtime.config)
+
+
+def test_silence_retry_only_replaces_bad_chunk_and_keeps_accepted_history(runtime, tmp_path):
+    def frames(marker, count):
+        codes = torch.full((3, count), marker, dtype=torch.int64)
+        return torch.cat((codes[:1] + 100, codes)).T
+
+    attempts = [frames(1, 3), frames(7, 120), frames(2, 4), frames(3, 3)]
+    runtime.generator.side_effect = [
+        GenerationResult(value, "eos", .1, .2, .1) for value in attempts]
+    runtime.engine._decode_audio_segments.side_effect = lambda parts: torch.full(
+        (sum(part.shape[1] for part in parts) * 2048,),
+        0.0 if int(parts[0][0, 0]) == 7 else .1)
+    delivered, progress = [], []
+    report = runtime.workflows.run(
+        "tts", "One. Two. Three.", tmp_path / "retry.wav", max_chunk_chars=6,
+        seed=123, silence_retry=True, segment_ready=delivered.append, progress=progress.append)
+    assert report["status"] == "complete"
+    assert report["silence_retry"] == {"retries": 1, "exhausted": False}
+    assert runtime.generator.call_count == runtime.engine._decode_audio_segments.call_count == 4
+    assert len(delivered) == 3 and report["audio"]["samples"] == 10 * 2048
+    take, _, _ = load_take(report["take_file"], runtime.config)
+    assert torch.equal(take.codes, torch.cat([value[:, 1:].T for value in (attempts[0], attempts[2], attempts[3])], dim=1))
+    # Rejected audio never becomes the first/recent conditioning for chunk three.
+    prompt = runtime.generator.call_args.args[1]
+    assert not bool((prompt[:, 0] == 107).any())
+    assert bool((prompt[:, 0] == 102).any())
+    assert [event["retry"] for event in progress if event["stage"] == "silence_retry"] == [1]
+    assert report["chunks"][1]["silence_retry"]["retries"] == 1
+
+
+def test_truncated_silent_python_chunk_retries_and_exhaustion_keeps_diagnostic(runtime, tmp_path):
+    silent = GenerationResult(runtime.frames.repeat(40, 1), "length", .1, .2, .1)
+    runtime.engine._decode_audio_segments.side_effect = lambda parts: torch.zeros(
+        sum(part.shape[1] for part in parts) * 2048)
+    runtime.generator.return_value = silent
+    output = tmp_path / "exhausted.wav"
+    report = runtime.workflows.run("tts", "Hello.", output, silence_retry=True)
+    assert report["status"] == "incomplete" and report["output"] is None
+    assert runtime.generator.call_count == 3
+    assert report["silence_retry"] == {"retries": 2, "exhausted": True}
+    assert Path(report["chunks"][0]["diagnostic_audio"]).is_file()
+    assert not output.exists()
+
+
+def test_infill_source_silence_does_not_cause_a_retry(runtime, tmp_path):
+    source = torch.zeros((3, 280), dtype=torch.int64)
+    def decode(parts):
+        audio = torch.zeros(parts[0].shape[1] * 2048)
+        audio[140 * 2048:143 * 2048] = .1
+        return audio
+    runtime.engine._decode_audio_segments.side_effect = decode
+    report = runtime.workflows.run(
+        "infill", "Corrected.", tmp_path / "infill-silence.wav",
+        infill=InfillSpan(source, 140, 141), silence_retry=True)
+    assert report["status"] == "complete" and report["silence_retry"]["retries"] == 0
+    assert runtime.generator.call_count == runtime.engine._decode_audio_segments.call_count == 1

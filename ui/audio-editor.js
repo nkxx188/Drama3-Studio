@@ -102,8 +102,8 @@
       local: { schema: 2, quote: '', replacement: '', target: null },
       whole: { lines: copy(originalLines), direction: recipe.direction || '', references: {}, checked: false },
       parameters: {
-        maximum: String((recipe.max_new_tokens || Number(document.querySelector('#max-frames').value) || 768) * 2048 / 44100),
-        duration: '', temperature: String(recipe.temperature ?? document.querySelector('#temperature').value),
+        silence_retry: recipe.silence_retry !== false,
+        temperature: String(recipe.temperature ?? document.querySelector('#temperature').value),
         top_p: String(recipe.top_p ?? document.querySelector('#top-p').value),
         top_k: String(recipe.top_k ?? document.querySelector('#top-k').value),
         max_chars: String(recipe.max_chunk_chars ?? 160),
@@ -242,8 +242,6 @@
     parameters.append(label('summary', 'Generation settings'));
     const paramFields = el('div', 'field-grid'), paramInputs = {};
     for (const [key, caption, min, max, step] of [
-      ['maximum', 'Max duration (seconds)', '.01', '95.109', 'any'],
-      ['duration', 'Target duration (seconds)', '.01', '95.109', 'any'],
       ['max_chars', 'Text chunk target', '80', '320', '1'],
       ['temperature', 'Temperature', '0', '2', 'any'], ['top_p', 'Top P', '0', '1', 'any'],
       ['top_k', 'Top K', '0', '8193', '1'], ['seed', 'Seed', '0', String(2 ** 32 - 1), '1'],
@@ -260,7 +258,18 @@
     random.onchange = () => {
       draft.parameters.random = random.checked; draft.parameters.edited = true; saveSoon(); refresh();
     };
-    parameters.append(paramFields, randomField);
+    const silenceRetry = control('audio-edit-silence-retry', '', 'checkbox');
+    silenceRetry.checked = draft.parameters.silence_retry !== false;
+    const silenceField = el('label', 'check-field');
+    silenceField.append(silenceRetry, label('span', 'Auto-retry silent chunks'));
+    silenceField.dataset.i18nTitle = 'Retry chunks with over 5 seconds of near-silence, up to twice.';
+    silenceField.title = t(silenceField.dataset.i18nTitle);
+    silenceRetry.onchange = () => {
+      draft.parameters.silence_retry = silenceRetry.checked;
+      draft.parameters.edited = true; saveSoon(); refresh();
+    };
+    paramFields.append(randomField);
+    parameters.append(paramFields, silenceField);
     parameters.classList.add('dock-settings');
     const settingsSummary = parameters.querySelector(':scope > summary');
     delete settingsSummary.dataset.i18n;
@@ -327,14 +336,14 @@
       const phase = { model_load: 'Loading model', initialization: 'Initializing',
         waiting: 'Waiting for text', generation: 'Generating' }[timing.phase];
       stage.textContent = running ? job.status === 'queued' ? t('Queued')
-        : phase ? t(phase) : stageLabel((job.events || []).at(-1)?.stage) || t('Generating') : '';
+        : retryStage(job) || (phase ? t(phase) : stageLabel((job.events || []).at(-1)?.stage) || t('Generating')) : '';
       count.textContent = !running || timing.phase === 'generation' ? generationTimeLabel(job) : '';
       bar.style.width = running ? '32%' : job.status === 'complete' ? '100%' : '0%';
       bar.classList.toggle('indeterminate', running);
       cancel.hidden = !running; cancel.disabled = Boolean(job.cancel_requested);
       cancel.dataset.i18n = job.cancel_requested ? 'Cancelling…' : 'Cancel';
       cancel.textContent = t(cancel.dataset.i18n);
-      resultError.hidden = !job.error; resultError.textContent = job.error ? message(job.error) : '';
+      resultError.hidden = !jobIssue(job); resultError.textContent = jobIssue(job);
       renderResults(job, resultBox);
     }
     async function pollResult(id) {
@@ -542,7 +551,6 @@
       insert.disabled ||= !Number.isFinite(audio.duration);
       random.disabled = context.busy;
       paramInputs.seed.disabled = context.busy || random.checked;
-      paramInputs.duration.disabled = context.busy || !caps.duration_hint;
       direction.disabled = context.busy || caps.direction === false;
       sourceVoices.hidden = local || !changedText || !missingSpeakers.length;
       audio.dataset.selection = String(local || (!sourceVoices.hidden && speakers.length > 1));
@@ -641,18 +649,17 @@
     };
     function sampling() {
       for (const [key, input] of Object.entries(paramInputs)) {
-        if (key === 'seed' && random.checked || key === 'duration' && !input.value) continue;
+        if (key === 'seed' && random.checked) continue;
         if (!input.value || !input.checkValidity()) throw new Error(t('Check generation settings.'));
       }
-      const read = key => UiNumber.read(paramInputs[key]), maximum = read('maximum'), duration = read('duration');
+      const read = key => UiNumber.read(paramInputs[key]);
       if (!(read('temperature') > 0 && read('top_p') > 0)) throw new Error(t('Check generation settings.'));
-      if (duration > maximum) throw new Error(t('Target duration exceeds the maximum generation length'));
       return {
         seed: random.checked ? crypto.getRandomValues(new Uint32Array(1))[0] : read('seed'),
         temperature: read('temperature'), top_p: read('top_p'), top_k: read('top_k'),
         max_chunk_chars: Math.round(read('max_chars')),
-        max_new_tokens: Math.max(1, Math.round(maximum * 44100 / 2048)),
-        duration_frames: duration ? Math.max(1, Math.round(duration * 44100 / 2048)) : null,
+        automatic_length: true, duration_frames: null,
+        silence_retry: silenceRetry.checked,
       };
     }
     async function generate() {

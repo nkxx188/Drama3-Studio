@@ -532,6 +532,8 @@ html, body, button, input, textarea, select, h1, h2, h3, strong { letter-spacing
 .compact-studio .generation-settings-popover .advanced-content > div { margin-bottom: 12px; }
 .compact-studio .generation-settings-popover .input { min-height: 36px; padding: 6px 9px; font-size: 15px; }
 .compact-studio .generation-settings-popover .check-field { margin-top: 9px; font-size: 14px; }
+.compact-studio .audio-edit-parameters .generation-settings-popover .field-grid > .field-label { margin-bottom: 0; }
+.compact-studio .audio-edit-parameters .generation-settings-popover .field-grid > .check-field { align-self: end; min-height: 36px; margin-top: 0; }
 .compact-studio .generation-settings-popover .task-details,
 .compact-studio .generation-settings-popover .source-details { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); }
 .compact-studio .generation-settings-popover details > summary { padding: 0; font-size: 14px; line-height: 1.6; }

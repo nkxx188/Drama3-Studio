@@ -20,6 +20,7 @@ from .protocols import PreviousTake, design_character, directed_text, validate_c
 from .text_chunks import split_text
 from .workflows import _history_variants, _is_prompt_overflow
 from .sampling import DEFAULT_TOP_K
+from .silence_retry import run_with_silence_retry, silent_wav_span, retry_summary
 
 
 class GGUFWorkflows:
@@ -35,7 +36,7 @@ class GGUFWorkflows:
             lookahead="", seed=123, max_new_tokens=768, max_chunk_chars=160,
             temperature=1.0, top_k=DEFAULT_TOP_K, top_p=0.9, progress=None, cancelled=None,
             segment_ready=None, streaming_audio=False, chunk_frames=16, single_chunk=False,
-            voice_description="", character_name="Voice", scene=""):
+            voice_description="", character_name="Voice", scene="", silence_retry=False):
         if mode not in ("tts", "revision", "edit", "infill", "stream", "design"):
             raise ValueError("Unknown GGUF workflow")
         if mode == "design":
@@ -49,6 +50,10 @@ class GGUFWorkflows:
         validate_content(text, "text")
         validate_content(direction, "direction", empty=True)
         validate_content(lookahead, "lookahead", empty=True)
+        if not isinstance(silence_retry, bool):
+            raise ValueError("silence_retry must be a boolean")
+        if silence_retry and streaming_audio:
+            raise ValueError("Silence retry requires complete audio chunks before delivery")
         if mode in ("revision", "edit") and not previous_takes:
             raise ValueError("Revision and continuation editing require a previous take")
         if mode == "infill":
@@ -106,30 +111,42 @@ class GGUFWorkflows:
                                   "limit": max_new_tokens})
 
                 extra = {"design": design} if design else {}
-                result = None
-                history_error = None
-                for active_history in _history_variants(
-                    previous_takes, first, last):
-                    try:
-                        result = self.engine.generate(
-                            f"[{direction}] {chunk}" if design and direction else chunk,
-                            target, references=references, previous_takes=active_history,
-                            direction="" if design else direction, language=language, duration_frames=duration_frames,
-                            task_mode=mode if mode in ("infill", "stream", "design") else "joint" if single_chunk else "",
-                            lookahead=lookahead, infill=infill, seed=(seed + index) % 2**32,
-                            max_frames=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p,
-                            chunk_size=2000, cancelled=cancelled, streaming_audio=streaming_audio,
-                            chunk_frames=chunk_frames, segment_ready=deliver if streaming_audio else None, **extra)
-                    except Exception as error:
-                        if not _is_prompt_overflow(error):
-                            raise
-                        history_error = error
-                        continue
-                    break
-                if result is None:
+
+                def attempt(run_seed):
+                    history_error = None
+                    for active_history in _history_variants(previous_takes, first, last):
+                        try:
+                            return self.engine.generate(
+                                f"[{direction}] {chunk}" if design and direction else chunk,
+                                target, references=references, previous_takes=active_history,
+                                direction="" if design else direction, language=language, duration_frames=duration_frames,
+                                task_mode=mode if mode in ("infill", "stream", "design") else "joint" if single_chunk else "",
+                                lookahead=lookahead, infill=infill, seed=run_seed,
+                                max_frames=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p,
+                                chunk_size=2000, cancelled=cancelled, streaming_audio=streaming_audio,
+                                chunk_frames=chunk_frames, segment_ready=deliver if streaming_audio else None, **extra)
+                        except Exception as error:
+                            if not _is_prompt_overflow(error):
+                                raise
+                            history_error = error
                     raise history_error or RuntimeError("No usable generation history")
+
+                def inspect_audio(value):
+                    if value.get("status") not in ("complete", "incomplete") or not value.get("output"):
+                        return None
+                    begin, end = 0, None
+                    if mode == "infill":
+                        prefix, suffix = infill.parts(CODEC_CONFIG)
+                        begin = prefix.shape[1] * 2048
+                        end = value["audio"]["samples"] - suffix.shape[1] * 2048
+                    return silent_wav_span(value["output"], start_sample=begin, end_sample=end)
+
+                result, retry = run_with_silence_retry(
+                    attempt, inspect_audio, seed=(seed + index) % 2**32, enabled=silence_retry,
+                    cancelled=cancelled, on_retry=lambda event: progress and progress({
+                        **event, "chunk": index + 1, "chunks": len(chunks)}))
                 last_result = result
-                status = result["status"]
+                status = "incomplete" if retry and retry["exhausted"] else result["status"]
                 if not result.get("take_file"):
                     # Legacy workers may do basic TTS, but cannot advertise
                     # editing/history without real codec artifacts.
@@ -139,10 +156,12 @@ class GGUFWorkflows:
                 for saved in current_takes:
                     records.append({"text": saved.text, "frames": saved.codes.shape[1],
                                     "native_request_seconds": result.get("request_seconds"),
-                                    "status": status})
+                                    "status": status,
+                                    **({"silence_retry": retry} if retry else {})})
                 takes.extend(current_takes)
-                first = first or current_takes[0]
-                last = current_takes[-1]
+                if status == "complete":
+                    first = first or current_takes[0]
+                    last = current_takes[-1]
                 outputs.append(result["output"])
                 position += result["audio"]["samples"]
                 if segment_ready and not streaming_audio and mode != "infill" and status == "complete":
@@ -182,6 +201,7 @@ class GGUFWorkflows:
                           "duration_seconds": position / 44100},
                 "audio_seconds": position / 44100, "chunks": records, "segments": segments,
                 "seed": seed, "total_seconds": time.perf_counter() - started,
+                "silence_retry": retry_summary(records),
                 "all_top8_preserved": True,
             }
             if streaming_audio:
