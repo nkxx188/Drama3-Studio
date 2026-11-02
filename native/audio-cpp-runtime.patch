@@ -104,7 +104,7 @@ index 842e63b..1868886 100644
      class DecodeSession {
      public:
 diff --git a/include/engine/community_models/fish_drama3/generator.h b/include/engine/community_models/fish_drama3/generator.h
-index 8c1e4a2..537045a 100644
+index 8c1e4a2..cb07add 100644
 --- a/include/engine/community_models/fish_drama3/generator.h
 +++ b/include/engine/community_models/fish_drama3/generator.h
 @@ -26,11 +26,14 @@ public:
@@ -114,7 +114,8 @@ index 8c1e4a2..537045a 100644
 +    void reserve_context(int64_t cache_steps);
 +    int64_t context_capacity() const noexcept;
      codecs::FishDacCodes encode_reference(const runtime::AudioBuffer & audio);
-     void warm_streaming_codec(const codecs::FishDacCodes & reference);
+-    void warm_streaming_codec(const codecs::FishDacCodes & reference);
++    void warm_output_codec(const codecs::FishDacCodes & reference);
      Drama3Generation generate(const std::string & text, const std::vector<Drama3Take> & references,
          const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
 -        const std::function<void(const runtime::AudioBuffer &)> & on_audio = {}, bool continuation = false);
@@ -123,13 +124,14 @@ index 8c1e4a2..537045a 100644
  
  private:
      std::shared_ptr<const Drama3Assets> assets_;
-@@ -45,6 +48,9 @@ private:
+@@ -45,6 +48,10 @@ private:
      std::unique_ptr<Drama3Tower> tower_;
      std::unique_ptr<core::ExecutionContext> codec_execution_;
      std::unique_ptr<codecs::FishDacCodecRuntime> codec_;
 +    std::unique_ptr<core::ExecutionContext> codec_decode_execution_;
 +    std::unique_ptr<codecs::FishDacCodecRuntime> codec_decode_;
 +    bool bounded_codec_decode_ = false;
++    bool output_codec_warmed_ = false;
      std::optional<runtime::AudioBuffer> cached_reference_audio_;
      codecs::FishDacCodes cached_reference_codes_;
  };
@@ -744,7 +746,7 @@ index 88a550f..2ff26b2 100644
 +
  }  // namespace engine::models::fish_drama3
 diff --git a/src/community_models/fish_drama3/generator.cpp b/src/community_models/fish_drama3/generator.cpp
-index 9c9e2e7..f264495 100644
+index 9c9e2e7..5f14e75 100644
 --- a/src/community_models/fish_drama3/generator.cpp
 +++ b/src/community_models/fish_drama3/generator.cpp
 @@ -8,6 +8,8 @@
@@ -756,8 +758,23 @@ index 9c9e2e7..f264495 100644
  #include <deque>
  #include <iostream>
  #include <numeric>
-@@ -24,7 +26,9 @@ int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
-         return sampling::HfLogitsProcessor::argmax(logits.data(), logits.size(), "Drama 3");
+@@ -18,13 +20,22 @@ namespace engine::models::fish_drama3 {
+ namespace {
+ 
+ int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
+-               float top_p, std::mt19937 & random) {
++               float top_p, std::mt19937 & random, int legal_count = -1) {
+     if (logits.empty()) throw std::runtime_error("Drama 3 sampler has no logits");
++    if (legal_count == 0 || legal_count < -1)
++        throw std::runtime_error("Drama 3 sampler received an invalid legal token count");
++    if (legal_count > static_cast<int>(logits.size()))
++        throw std::runtime_error("Drama 3 sampler legal token count exceeds its logits");
++    const auto legal_size = legal_count < 0
++        ? logits.size()
++        : static_cast<size_t>(legal_count);
+     if (temperature == 0 || top_k == 1)
+-        return sampling::HfLogitsProcessor::argmax(logits.data(), logits.size(), "Drama 3");
++        return sampling::HfLogitsProcessor::argmax(logits.data(), legal_size, "Drama 3");
      std::vector<int32_t> order(logits.size());
      std::iota(order.begin(), order.end(), 0);
 -    const auto count = std::min(logits.size(), static_cast<size_t>(top_k));
@@ -767,16 +784,20 @@ index 9c9e2e7..f264495 100644
      std::partial_sort(order.begin(), order.begin() + count, order.end(), [&](int32_t left, int32_t right) {
          return logits[left] == logits[right] ? left < right : logits[left] > logits[right];
      });
-@@ -41,7 +45,7 @@ int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
+@@ -41,8 +52,11 @@ int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
      double cumulative = 0;
      for (size_t rank = 0; rank < order.size(); ++rank) {
          cumulative += probabilities[rank] / total;
 -        if (rank > 0 && (cumulative > top_p || rank >= static_cast<size_t>(top_k))) probabilities[rank] = 0;
 +        if (rank > 0 && (cumulative > top_p || (top_k > 0 && rank >= static_cast<size_t>(top_k)))) probabilities[rank] = 0;
++        if (legal_count >= 0 && order[rank] >= legal_count) probabilities[rank] = 0;
      }
++    if (std::none_of(probabilities.begin(), probabilities.end(), [](double value) { return value > 0; }))
++        return sampling::HfLogitsProcessor::argmax(logits.data(), legal_size, "Drama 3");
      std::discrete_distribution<size_t> choice(probabilities.begin(), probabilities.end());
      return order[choice(random)];
-@@ -65,6 +69,24 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
+ }
+@@ -65,6 +79,24 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
      auto backbone_config = assets_->backbone;
      backbone_config.decode_cache_steps = cache_steps_;
      backbone_config.cpu_expert_layers = runtime::parse_i64_option(options.options, {"fish_drama3.cpu_expert_layers"}).value_or(4);
@@ -801,7 +822,7 @@ index 9c9e2e7..f264495 100644
      if (const auto value = runtime::find_option(options.options, {"fish_drama3.disk_experts"}))
          backbone_config.disk_experts = runtime::parse_bool_option(*value, "fish_drama3.disk_experts");
      if (const auto value = runtime::find_option(options.options, {"fish_drama3.pin_experts"}))
-@@ -93,6 +115,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
+@@ -93,6 +125,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
      codec_execution_ = std::make_unique<core::ExecutionContext>(codec_backend);
      codecs::FishDacCodecRuntimeOptions codec_options;
      codec_options.weight_context_bytes = 16 * 1024 * 1024;
@@ -812,7 +833,7 @@ index 9c9e2e7..f264495 100644
      const auto component = codecs::FishDacCodecComponent::load_from_tensor_source(assets_->codec_weights,
          assets_->codec, {}, codec_execution_->backend(), codec_backend.type, codec_options);
      bool codec_encoder_f32_accumulation = false;
-@@ -101,17 +127,52 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
+@@ -101,17 +137,52 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
      }
      codec_ = std::make_unique<codecs::FishDacCodecRuntime>(component, codec_backend,
          codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation);
@@ -865,7 +886,36 @@ index 9c9e2e7..f264495 100644
      auto result = codec_->encode_codes(audio);
      codec_->release_encode_graph();
      validate_drama3_codes(result, assets_->tower.codebook_size);
-@@ -147,10 +208,11 @@ void Drama3Generator::warm_streaming_codec(const codecs::FishDacCodes & referenc
+@@ -128,7 +199,8 @@ codecs::FishDacCodes Drama3Generator::encode_reference(const runtime::AudioBuffe
+     return result;
+ }
+ 
+-void Drama3Generator::warm_streaming_codec(const codecs::FishDacCodes & reference) {
++void Drama3Generator::warm_output_codec(const codecs::FishDacCodes & reference) {
++    if (output_codec_warmed_) return;
+     validate_drama3_codes(reference, assets_->tower.codebook_size);
+     codecs::FishDacCodes frame;
+     frame.codebooks = reference.codebooks;
+@@ -136,21 +208,25 @@ void Drama3Generator::warm_streaming_codec(const codecs::FishDacCodes & referenc
+     for (int64_t book = 0; book < reference.codebooks; ++book) {
+         frame.codes.push_back(reference.codes[static_cast<size_t>(book * reference.frames)]);
+     }
+-    // Initialize and capture the first-frame codec graph during preparation.
+-    // Discard decoded reference audio and reset all causal stream state.
++    // Initialize the same decoder instance used for generated output. The
++    // reference encoder and output decoder may have different backends on a
++    // low-VRAM plan, so warming codec_ alone is insufficient.
++    auto & output_codec = codec_decode_ ? *codec_decode_ : *codec_;
+     for (int pass = 0; pass < 4; ++pass) {
+-        codec_->reset_decode_stream();
+-        (void)codec_->decode_stream(frame);
++        output_codec.reset_decode_stream();
++        (void)output_codec.decode_stream(frame);
+     }
+-    codec_->reset_decode_stream();
++    output_codec.reset_decode_stream();
++    output_codec_warmed_ = true;
+ }
  
  Drama3Generation Drama3Generator::generate(const std::string & text, const std::vector<Drama3Take> & references,
      const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
@@ -879,7 +929,7 @@ index 9c9e2e7..f264495 100644
      using ProfileClock = std::chrono::steady_clock;
      std::array<double, 9> component_ms{};
      auto component_started = ProfileClock::now();
-@@ -163,10 +225,12 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+@@ -163,10 +239,12 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
          first_audio_phases.emplace_back(name, std::chrono::duration<double, std::milli>(now - profile_marked).count());
          profile_marked = now;
      };
@@ -894,7 +944,7 @@ index 9c9e2e7..f264495 100644
      }
      auto & decoder = decoder_;
      // A continuation may extend the exact frames already evaluated. Never
-@@ -216,7 +280,8 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+@@ -216,7 +294,8 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
      std::deque<int32_t> recent;
      std::vector<Drama3Frame> output_frames;
      Drama3Generation result;
@@ -904,7 +954,19 @@ index 9c9e2e7..f264495 100644
      for (int64_t step = 0; step < sampling.max_frames; ++step) {
          component_started = ProfileClock::now();
          const auto candidates = backbone_->lm_head(hidden);
-@@ -261,7 +326,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+@@ -246,7 +325,10 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+             tower_hidden = tower_output.hidden;
+             if (layer >= config.shared_layers) {
+                 component_started = ProfileClock::now();
+-                next[2 + book] = sample(tower_output.logits, sampling.temperature, sampling.top_k, sampling.top_p, random);
++                next[2 + book] = sample(
++                    tower_output.logits, sampling.temperature, sampling.top_k,
++                    sampling.top_p, random,
++                    static_cast<int>(assets_->codec.residual_codebook_size));
+                 component_ms[5] += debug::elapsed_ms(component_started);
+             }
+         }
+@@ -261,7 +343,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
              codes.codebooks = 10;
              codes.frames = 1;
              codes.codes.assign(next.begin() + 1, next.end());
@@ -913,7 +975,7 @@ index 9c9e2e7..f264495 100644
              if (step == 0) mark_phase("codec_first_frame_ms");
              runtime::append_audio_buffer(result.audio, chunk);
              if (on_audio) on_audio(chunk);
-@@ -283,7 +348,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+@@ -283,7 +365,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
          if (disk_experts_) prefill.hidden.insert(prefill.hidden.end(), hidden.begin(), hidden.end());
          component_ms[7] += debug::elapsed_ms(component_started);
      }
@@ -922,7 +984,7 @@ index 9c9e2e7..f264495 100644
      if (disk_experts_) {
          cached_prefix_ = prompt;
          cached_prefix_.insert(cached_prefix_.end(), output_frames.begin(), output_frames.end());
-@@ -297,6 +362,19 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+@@ -297,6 +379,19 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
      for (int64_t book = 0; book < 10; ++book) {
          for (size_t row = 0; row < output_frames.size(); ++row) result.codes.codes[book * output_frames.size() + row] = output_frames[row][book + 1];
      }
@@ -942,7 +1004,7 @@ index 9c9e2e7..f264495 100644
      if (!streaming) {
          component_started = ProfileClock::now();
          if (disk_experts_) {
-@@ -305,10 +383,35 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
+@@ -305,10 +400,35 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
              backbone_->release_prefill_graphs();
              tower_->release_prefill_graphs();
          }
@@ -1071,7 +1133,7 @@ index 124020e..756dcbe 100644
  }
  
 diff --git a/src/community_models/fish_drama3/session.cpp b/src/community_models/fish_drama3/session.cpp
-index 86d1762..78a5111 100644
+index 86d1762..1fa31ec 100644
 --- a/src/community_models/fish_drama3/session.cpp
 +++ b/src/community_models/fish_drama3/session.cpp
 @@ -58,8 +58,10 @@ json::Value take_json(const Drama3Take & take) {
@@ -1116,7 +1178,19 @@ index 86d1762..78a5111 100644
          sampling.max_frames = runtime::parse_positive_i64_option(effective.options, {"max_tokens", "max_new_tokens"}, 1024);
          seed = runtime::parse_u32_option(effective.options, {"seed"});
      } catch (const std::runtime_error & error) {
-@@ -201,9 +209,48 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
+@@ -165,7 +173,10 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
+     if (const auto prepare = runtime::find_option(effective.options, {"encode_reference_only"});
+         prepare && runtime::parse_bool_option(*prepare, "encode_reference_only")) {
+         if (references.empty()) throw runtime::InvalidRequestError("Reference preparation requires reference audio or codes");
+-        if (task_.mode == runtime::RunMode::Streaming) generator_->warm_streaming_codec(references.front().codes);
++        // Reference preparation is also the right point to warm the output
++        // codec used by ordinary non-streaming generation. This keeps the
++        // first user-visible request from paying CUDA graph initialization.
++        generator_->warm_output_codec(references.front().codes);
+         runtime::TaskResult result;
+         for (size_t index = 0; index < references.size(); ++index) {
+             result.output_artifacts.push_back(runtime::make_text_artifact(runtime::ArtifactKind::AcousticTokens,
+@@ -201,9 +212,48 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
              append_take(descriptors);
          }
      }
@@ -1166,7 +1240,7 @@ index 86d1762..78a5111 100644
      runtime::TaskResult result;
      runtime::AudioBuffer merged;
      std::vector<Drama3Take> generated_takes;
-@@ -223,14 +270,20 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
+@@ -223,14 +273,20 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
              };
          }
          const auto & text = chunks[index].text_input->text;

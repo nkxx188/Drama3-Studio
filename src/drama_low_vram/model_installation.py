@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 
-from .model_download import Downloader, DownloadCancelled, manifest, sha256_file
+from .model_download import Downloader, DownloadCancelled, manifest, sha256_file, REVISION, HF_REVISION
 from .model_catalog import get_model
 
 
@@ -41,6 +41,18 @@ def _quantization_method(directory):
         return None
 
 
+def official_checkpoint_files(directory):
+    """Recognize the newer official layout by its bundled immutable index hash."""
+    document = json.loads(Path(__file__).with_name("data").joinpath(
+        "drama3-manifest-20261029.json").read_text(encoding="utf-8"))
+    index = next(row for row in document["files"] if row["name"] == "model.safetensors.index.json")
+    path = Path(directory) / index["name"]
+    if (path.is_file() and path.stat().st_size == index["size"]
+            and sha256_file(path) == index["sha256"]):
+        return document["files"]
+    return manifest()
+
+
 def inspect_checkpoint(directory, *, files=None):
     directory = model_directory(directory)
     shared_path = directory / "shared-model.json"
@@ -48,7 +60,7 @@ def inspect_checkpoint(directory, *, files=None):
         return inspect_shared_checkpoint(directory)
     if files is None and _quantization_method(directory) == "drama3-int4":
         return inspect_quantized_checkpoint(directory)
-    files = manifest() if files is None else files
+    files = official_checkpoint_files(directory) if files is None else files
     missing, invalid, present, partial = [], [], 0, 0
     for entry in files:
         target = directory / entry["name"]
@@ -177,6 +189,7 @@ def _quantized_files(receipt):
 class ModelInstallation:
     def __init__(self, data_root, *, files=None, checkpoint_root=None):
         self.data_root = Path(data_root)
+        self._default_files = files is None
         self.files = manifest() if files is None else files
         self.checkpoint_root = Path(checkpoint_root or Path(__file__).resolve().parents[2] / "checkpoints")
         self.state_file = self.data_root / "model-task.json"
@@ -284,7 +297,8 @@ class ModelInstallation:
                 return
             shared = (directory / "shared-model.json").is_file()
             quantized = _quantization_method(directory) == "drama3-int4"
-            inspected = inspect_checkpoint(directory) if shared or quantized else inspect_checkpoint(directory, files=self.files)
+            files = official_checkpoint_files(directory) if self._default_files and not (shared or quantized) else self.files
+            inspected = inspect_checkpoint(directory) if shared or quantized else inspect_checkpoint(directory, files=files)
             if inspected["invalid"]:
                 raise ValueError(
                     "Existing files differ from the pinned model. Choose a separate folder; existing files are preserved.")
@@ -329,19 +343,21 @@ class ModelInstallation:
                     and inspected["estimated_additional_bytes"] > inspected["disk_free_bytes"]):
                 raise OSError("The selected drive does not have enough free space for the remaining model files")
             downloader = Downloader(
-                directory, self.files, workers, chunk_mib * 1024**2, source=source,
+                directory, files, workers, chunk_mib * 1024**2, source=source,
+                revision=files[0].get("hf_revision", REVISION),
+                hf_revision=files[0].get("hf_revision", HF_REVISION),
                 progress=self._progress, cancel_event=cancel)
             if operation == "download":
                 downloader.run()
             else:
-                for entry in self.files:
+                for entry in files:
                     if downloader.verify_hash(directory / entry["name"]) != entry["sha256"]:
                         raise ValueError(f"Model SHA256 mismatch: {entry['name']}")
                     downloader.done_bytes += entry["size"]
                 downloader.emit("complete")
             with self._lock:
                 self._task["status"] = "complete"
-                self._task["inspection"] = inspect_checkpoint(directory, files=self.files)
+                self._task["inspection"] = inspect_checkpoint(directory, files=files)
                 self._task["finished_at"] = time.time()
                 self._save()
         except DownloadCancelled as exc:

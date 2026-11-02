@@ -30,7 +30,8 @@ def main():
     value = json.loads(metadata.read_text(encoding="utf-8"))
     value.update(sha256=hashlib.sha256(delta).hexdigest(), bytes=len(delta), native_protocol=5)
     value["features"] = ["ordinary", "references", "previous_takes", "stream", "infill",
-                         "audio_stream", "design", "joint_dialogue", "reference_prewarm"]
+                         "audio_stream", "design", "joint_dialogue", "reference_prewarm",
+                         "output_codec_prewarm"]
     metadata.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     subprocess.run(["git", "apply", "--reverse", "--check", str(target)], cwd=source, check=True)
     print(json.dumps(value, indent=2))

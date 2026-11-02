@@ -123,6 +123,82 @@ def test_zero_top_k_disables_only_the_top_k_filter():
     assert nucleus_choice.item() == 0
 
 
+def test_residual_sampler_excludes_illegal_codes_and_keeps_a_legal_fallback():
+    logits = torch.tensor([[0.0, 3.0, 2.0, 100.0, 1.0]])
+
+    # The highest overall logit is illegal. Even top_k=1 must fall back to the
+    # best legal code instead of emitting an invalid residual code.
+    for _ in range(4):
+        assert sample_top_k_top_p(
+            logits, 1.0, 1, 1.0, legal_column_count=3
+        ).item() == 1
+
+    # With no top-k cap, stochastic draws must still stay within the codec's
+    # legal code range.
+    for seed in range(32):
+        torch.manual_seed(seed)
+        sampled = sample_top_k_top_p(
+            logits, 1.0, 0, 1.0, legal_column_count=3
+        )
+        assert 0 <= sampled.item() < 3
+
+
+def test_residual_sampler_rejects_invalid_legal_range():
+    logits = torch.zeros(1, 4)
+    with pytest.raises(ValueError, match="legal_column_count"):
+        sample_top_k_top_p(logits, 1.0, 0, 1.0, legal_column_count=0)
+    with pytest.raises(ValueError, match="legal_column_count"):
+        sample_top_k_top_p(logits, 1.0, 0, 1.0, legal_column_count=5)
+
+
+@pytest.mark.parametrize("decode_path", ["eager", "graph"])
+def test_residual_decode_passes_codec_vocabulary_limit(monkeypatch, decode_path):
+    import fish_speech.models.text2semantic.fish_omni.tower as tower_module
+    import drama_low_vram.tower_graph as graph_module
+
+    module = tower_module if decode_path == "eager" else graph_module
+    original_sampler = module.sample_top_k_top_p
+    legal_counts = []
+
+    def record_legal_range(*args, **kwargs):
+        legal_counts.append(kwargs.get("legal_column_count"))
+        return original_sampler(*args, **kwargs)
+
+    monkeypatch.setattr(module, "sample_top_k_top_p", record_legal_range)
+    tower = tiny_tower()
+    logits = torch.zeros(1, 30)
+    hidden = torch.zeros(1, 32)
+    positions = torch.tensor([0])
+    frames = torch.zeros(1, 5, dtype=torch.long)
+    history = torch.tensor([-1])
+    if decode_path == "eager":
+        tower.decode_step(
+            logits,
+            hidden,
+            positions,
+            frames,
+            history,
+            temperature=1.0,
+            top_k=0,
+            top_p=1.0,
+        )
+    else:
+        _decode_candidates(
+            tower,
+            logits[:, main_token_candidates(tower)],
+            hidden,
+            positions,
+            frames,
+            history,
+            temperature=1.0,
+            top_k=0,
+            top_p=1.0,
+        )
+
+    assert legal_counts[:2] == [None, None]
+    assert legal_counts[2:] == [16] * (tower.config.num_codebooks - 1)
+
+
 def test_tower_graph_buckets_respect_actual_cache_capacity():
     assert tower_graph_buckets(25) == (25,)
     assert tower_graph_buckets(513) == (256, 512, 513)

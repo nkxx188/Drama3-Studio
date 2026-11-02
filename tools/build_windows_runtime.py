@@ -119,7 +119,8 @@ def main():
         "platform": "windows-x86_64", "cpu_requires_avx2": True,
         "cuda_version": "12.8", "protocol": 5,
         "features": ["ordinary", "references", "previous_takes", "stream", "infill",
-                     "audio_stream", "design", "joint_dialogue", "reference_prewarm"],
+                     "audio_stream", "design", "joint_dialogue", "reference_prewarm",
+                     "output_codec_prewarm"],
         "files": {p.name: sha(p) for p in output.iterdir() if p.is_file() and p.suffix in (".dll", ".exe")},
         "scope": "Compiled targets, not a claim of physical testing on every architecture",
     }

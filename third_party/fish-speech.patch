@@ -33,10 +33,28 @@ index 745e0d3..c8b4405 100644
      prompt_rows = len(prompt)
      capacity = prompt_rows + max_new_tokens
 diff --git a/fish_speech/models/text2semantic/fish_omni/tower.py b/fish_speech/models/text2semantic/fish_omni/tower.py
-index 4d7164d..4012995 100644
+index 4d7164d..b09bc03 100644
 --- a/fish_speech/models/text2semantic/fish_omni/tower.py
 +++ b/fish_speech/models/text2semantic/fish_omni/tower.py
-@@ -54,6 +54,10 @@ def sample_top_k_top_p(
+@@ -25,6 +25,9 @@ RAS_TEMPERATURE = 1.0
+ RAS_TOP_K = 30
+ RAS_TOP_P = 0.95
+ MIN_TEMPERATURE = 1e-5
++# The decoder heads use the semantic vocabulary width, but residual DAC
++# codebooks contain only 1024 entries.
++RESIDUAL_CODEBOOK_SIZE = 1024
+ TOWER_CHECKPOINT_PREFIXES = {
+     "audio_decoder.codebook_embeddings.": "codebook_embeddings.",
+     "audio_decoder_mtp_shared.layers.": "shared_layers.",
+@@ -39,6 +42,7 @@ def sample_top_k_top_p(
+     top_k: int | Tensor,
+     top_p: float | Tensor,
+     *,
++    legal_column_count: int | None = None,
+     check_finite: bool = True,
+ ) -> Tensor:
+     """One id per row; drops the token crossing top_p, except the highest-ranked one.
+@@ -54,8 +58,23 @@ def sample_top_k_top_p(
          raise FloatingPointError("non-finite logits; refusing to sample invalid audio")
      values, ids = torch.sort(logits.float() / temperature, descending=True, dim=-1)
      ranks = torch.arange(values.shape[-1], device=values.device)
@@ -46,4 +64,34 @@ index 4d7164d..4012995 100644
 +        top_k = top_k or values.shape[-1]
      dropped = (values.softmax(-1).cumsum(-1) > top_p) | (ranks >= top_k)
      dropped[..., 0] = False
++    if legal_column_count is not None:
++        if not 0 < legal_column_count <= values.shape[-1]:
++            raise ValueError(
++                "legal_column_count must be within the logits vocabulary"
++            )
++        legal = ids < legal_column_count
++        dropped |= ~legal
++        # top-k / top-p may have retained only out-of-range IDs. Keep the
++        # highest-ranked legal ID in that case so sampling remains defined.
++        first_legal_rank = legal.to(torch.int64).argmax(-1, keepdim=True)
++        dropped.scatter_(-1, first_legal_rank, False)
      probabilities = values.masked_fill(dropped, -torch.inf).softmax(-1)
+     noise = torch.empty_like(probabilities).exponential_()
+     choice = (probabilities / noise).argmax(-1, keepdim=True)
+@@ -380,9 +399,15 @@ class FishOmniAudioDecoder(nn.Module):
+         codes = [c0]
+         for layer, head in zip(self.residual_layers, self.codebook_heads):
+             hidden = layer(hidden, codes[-1], semantic, positions)
++            logits = head(hidden)
+             codes.append(
+                 sample_top_k_top_p(
+-                    head(hidden), temperature, top_k, top_p, check_finite=check_finite
++                    logits,
++                    temperature,
++                    top_k,
++                    top_p,
++                    legal_column_count=min(RESIDUAL_CODEBOOK_SIZE, logits.shape[-1]),
++                    check_finite=check_finite,
+                 )
+             )
+         return torch.stack((main, *codes), dim=-1)

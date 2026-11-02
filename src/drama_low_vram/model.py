@@ -83,7 +83,7 @@ def load_offloaded_drama3(
 
     The model is constructed on ``meta`` and materialized directly into its final
     placement. This avoids the upstream loader's temporary full-GPU expert layout.
-    ``checkpoint_dir`` must contain the complete eight-shard checkpoint.
+    ``checkpoint_dir`` must contain the complete official indexed checkpoint.
     """
     checkpoint_dir = Path(checkpoint_dir).resolve()
     if not (checkpoint_dir / "config.json").is_file():

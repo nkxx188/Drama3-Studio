@@ -20,6 +20,7 @@ from fish_speech.models.text2semantic.fish_omni.tower import (
     RAS_TOP_K,
     RAS_TOP_P,
     RAS_WINDOW_FRAMES,
+    RESIDUAL_CODEBOOK_SIZE,
     FishOmniAudioDecoder,
     TowerAttention,
     sample_top_k_top_p,
@@ -69,12 +70,22 @@ def _decode_candidates(
     candidates = main_token_candidates(tower) if candidates is None else candidates
 
     def sample(
-        logits: Tensor, temperature: float | Tensor, top_k: int | Tensor, top_p: float | Tensor
+        logits: Tensor,
+        temperature: float | Tensor,
+        top_k: int | Tensor,
+        top_p: float | Tensor,
+        *,
+        legal_column_count: int | None = None,
     ) -> Tensor:
         if finite is not None:
             finite.logical_and_(torch.isfinite(logits).all())
         return sample_top_k_top_p(
-            logits, temperature, top_k, top_p, check_finite=finite is None
+            logits,
+            temperature,
+            top_k,
+            top_p,
+            legal_column_count=legal_column_count,
+            check_finite=finite is None,
         )
 
     first = candidates[sample(candidate_logits, temperature, top_k, top_p)]
@@ -101,7 +112,15 @@ def _decode_candidates(
         logits = head(hidden)
         if codebook_logits is not None:
             codebook_logits[index].copy_(logits[0])
-        codes.append(sample(logits, temperature, top_k, top_p))
+        codes.append(
+            sample(
+                logits,
+                temperature,
+                top_k,
+                top_p,
+                legal_column_count=min(RESIDUAL_CODEBOOK_SIZE, logits.shape[-1]),
+            )
+        )
     return torch.stack((main, *codes), dim=-1)
 
 
