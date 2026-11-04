@@ -12,12 +12,10 @@ const report = { scope: 'Actual writing layout and compact voice library, reusab
     await context.addInitScript(() => localStorage.setItem('drama3.ui.language', 'zh-CN'));
     page = await context.newPage();
     page.on('pageerror', error => report.errors.push(error.stack || error.message));
-    let asrCalls = 0, asrAvailable = false;
+    let asrCalls = 0;
     await page.route('**/api/transcriptions', route => {
       asrCalls++;
-      return route.fulfill({ json: asrAvailable
-        ? { id: 'library-fixture-asr', status: 'complete', result: { text: '这是自动转写的附加参考台词。' } }
-        : { id: 'library-fixture-asr', status: 'skipped', reason: 'model_unavailable' } });
+      return route.fulfill({ json: { id: 'library-fixture-asr', status: 'skipped', reason: 'model_unavailable' } });
     });
     const api = async (url, data) => {
       const response = data === undefined ? await context.request.get(base + url)
@@ -176,16 +174,10 @@ const report = { scope: 'Actual writing layout and compact voice library, reusab
       && await page.inputValue('#library-new-transcript') === '这是我人工核对的主参考台词。'
       && !await page.locator('#library-new-asr').count()
       && await page.evaluate(() => Boolean(StudioFlow.flow.voiceDraft.main.upload?.id)));
-    asrAvailable = true;
-    const additional = page.locator('#voice-library-preparation > .additional-references');
-    await additional.locator(':scope > summary').click();
-    await additional.getByRole('button', { name: await page.evaluate(() => t('Add reference')), exact: true }).click();
-    const extra = page.locator('#voice-library-extras > .reference-preparation').first();
-    await extra.locator('input[type="file"]').setInputFiles(process.env.DRAMA_STUDIO_REFERENCE);
-    await page.waitForFunction(() => StudioFlow.flow.voiceDraft.extraReferences[0]?.transcript === '这是自动转写的附加参考台词。');
-    check('additional_reference_uses_automatic_transcription', asrCalls === 2
-      && await extra.locator('textarea').inputValue() === '这是自动转写的附加参考台词。');
-    await page.locator('#voice-name').fill('Compact multi-reference voice');
+    check('add_voice_dialog_has_one_reference_entry', !await dialog().locator('.additional-references').count()
+      && !await dialog().getByRole('button', { name: await page.evaluate(() => t('Add reference')), exact: true }).count()
+      && await dialog().locator('#voice-library-clips .reference-preparation').count() === 1);
+    await page.locator('#voice-name').fill('Single reference voice');
     let rejectSave = true;
     await page.route('**/api/voices/from-references', route => {
       if (rejectSave) { rejectSave = false; return route.fulfill({ status: 400, json: { error: 'Fixture rejected save.' } }); }
@@ -193,27 +185,32 @@ const report = { scope: 'Actual writing layout and compact voice library, reusab
     });
     await page.locator('#save-voice').click();
     await page.waitForFunction(() => document.getElementById('voice-form-note').textContent.includes('Fixture rejected save.'));
-    check('server_error_stays_in_modal_and_preserves_ready_references', await note().isVisible()
+    check('server_error_stays_in_modal_and_preserves_primary_reference', await note().isVisible()
       && await dialog().isVisible() && await page.locator('#save-voice').isEnabled()
-      && await page.inputValue('#library-new-transcript') === '这是我人工核对的主参考台词。'
-      && await extra.locator('textarea').inputValue() === '这是自动转写的附加参考台词。');
+      && await page.inputValue('#library-new-transcript') === '这是我人工核对的主参考台词。');
     await page.locator('#save-voice').click(); await dialog().waitFor({ state: 'hidden' });
     await page.waitForFunction(() => document.querySelectorAll('#voice-list .voice-card').length === 3);
-    const savedVoice = (await api('/api/voices')).voices.find(voice => voice.name === 'Compact multi-reference voice');
-    check('successful_save_closes_modal_and_persists_all_references', savedVoice?.references?.length === 2
-      && savedVoice.references[0].transcript.includes('这是我人工核对的主参考台词。')
-      && savedVoice.references[1].transcript.includes('这是自动转写的附加参考台词。'));
-    check('successful_save_resets_only_add_voice_draft', await page.inputValue('#voice-name') === ''
+    const savedVoice = (await api('/api/voices')).voices.find(voice => voice.name === 'Single reference voice');
+    check('successful_save_closes_modal_and_persists_one_reference', savedVoice?.references?.length === 1
+      && savedVoice.references[0].transcript.includes('这是我人工核对的主参考台词。'));
+    check('successful_save_resets_add_voice_draft', await page.inputValue('#voice-name') === ''
       && await page.inputValue('#text') === '保持这份尚未提交的创作草稿。'
-      && await page.evaluate(() => !StudioFlow.flow.voiceDraft.main.upload && !StudioFlow.flow.voiceDraft.extraReferences.length));
+      && await page.evaluate(() => !StudioFlow.flow.voiceDraft.main.upload
+        && !StudioFlow.flow.voiceDraft.extraReferences));
+    const multiVoice = await api('/api/voices/from-references', { name: 'Compact multi-reference voice',
+      references: [
+        { voice_id: savedVoice.id, reference_index: 0, speaker: 0, text: '这是我人工核对的主参考台词。' },
+        { voice_id: savedVoice.id, reference_index: 0, speaker: 0, text: '这是单独保存的附加参考台词。' },
+      ] });
+    check('existing_multi_reference_voice_format_remains_supported', multiVoice.references?.length === 2);
     for (const name of ['清晰旁白', '나긋한 설명', 'A long voice name for layout checking without horizontal overflow', '落ち着いたナレーション']) {
       await api('/api/voices/from-references', { name,
-        references: [{ voice_id: savedVoice.id, reference_index: 0, speaker: 0, text: '这是我人工核对的主参考台词。' }] });
+        references: [{ voice_id: multiVoice.id, reference_index: 0, speaker: 0, text: '这是我人工核对的主参考台词。' }] });
     }
     await page.evaluate(() => loadVoices());
-    const savedTile = page.locator('#voice-list .voice-card').filter({ has: page.locator('.use-voice[data-id=' + JSON.stringify(savedVoice.id) + ']') });
+    const savedTile = page.locator('#voice-list .voice-card').filter({ has: page.locator('.use-voice[data-id=' + JSON.stringify(multiVoice.id) + ']') });
     const more = savedTile.locator('.voice-reference-clips');
-    check('multi_reference_tile_keeps_compact_extra_clips', await more.count() === 1);
+    check('existing_multi_reference_tile_keeps_compact_extra_clips', await more.count() === 1);
     await more.locator(':scope > summary').click(); await settle();
     check('extra_reference_has_preview_and_download_without_waveform', await more.locator('button').count() >= 1
       && await more.locator('a[download]').count() === 1 && !await more.locator('audio,.studio-player').count());
@@ -224,7 +221,7 @@ const report = { scope: 'Actual writing layout and compact voice library, reusab
     check('collapsing_extra_clips_stops_their_audio', await page.evaluate(() => !audition || audition.paused));
     await savedTile.locator('.use-voice').click();
     await page.locator('#view-generate.active').waitFor();
-    check('use_voice_returns_to_creation_with_correct_saved_voice', await page.evaluate(id => selectedVoices().includes(id), savedVoice.id)
+    check('use_voice_returns_to_creation_with_correct_saved_voice', await page.evaluate(id => selectedVoices().includes(id), multiVoice.id)
       && await page.inputValue('#text') === '保持这份尚未提交的创作草稿。');
     await navigate('voices'); await shot('compact-voice-library-desktop');
     const names = { 'zh-CN': '添加音色', en: 'Add a voice', ja: 'ボイスを追加', ko: '음성 추가' };

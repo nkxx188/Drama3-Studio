@@ -42,7 +42,7 @@
     versionFocus: null, workJobs: {}, missingJobs: new Set(), historyLoads: new Map(),
     failedHistories: new Set(), restoredFrom: null, restoredModel: null, designRecipe: null,
     contexts: new Map(), contextLoads: new Map(), streamDraft: null, switchingInput: false };
-  flow.voiceDraft = { main: ReferencePrep.fresh(), extraReferences: [] };
+  flow.voiceDraft = { main: ReferencePrep.fresh(), name: '' };
   const formIds = ['text', 'direction', 'language', 'seed',
     'max-chars', 'temperature', 'top-p', 'top-k', 'candidate-count', 'chunks',
     'source-take', 'previous-take', 'start-time', 'end-time', 'start-frame', 'end-frame'];
@@ -123,7 +123,7 @@
       if (!syncCloneAudioSelection()) return;
       if (state.cloneFile) await uploadCloneAudio();
       const single = capture(), scene = sceneSnapshot(), voice = {
-        ...copy(flow.voiceDraft), name: $('voice-name').value,
+        main: copy(flow.voiceDraft.main), name: $('voice-name').value,
       };
       flow.saving = flow.saving.catch(() => {}).then(async () => {
         await post('/api/studio/draft', { key: 'single', value: single });
@@ -1181,13 +1181,7 @@
     const footer = form.querySelector('.compose-footer');
     const preparation = node('fieldset', 'voice-library-preparation'); preparation.id = 'voice-library-preparation';
     const clips = node('div'); clips.id = 'voice-library-clips';
-    const additional = node('details', 'additional-references');
-    additional.append(localized('summary', '', 'Additional references · same voice'));
-    const extras = node('div'); extras.id = 'voice-library-extras';
-    additional.append(extras, command('Add reference', () => {
-      flow.voiceDraft.extraReferences.push(ReferencePrep.fresh()); renderVoiceDraft(); saveSoon();
-    }, 'text-btn'));
-    preparation.append(clips, additional);
+    preparation.append(clips);
     for (const child of [...form.children]) {
       if (![nameLabel, name, footer].includes(child)) legacy.append(child);
     }
@@ -1220,25 +1214,14 @@
     document.addEventListener('drama:editor-notice', event => {
       if (dialog.open) showNote(event.detail);
     });
-    const draw = (box, references, primary = false) => {
-      const old = new Map([...box.children].map(row => [row.dataset.referenceKey, row]));
-      for (const reference of references) {
-        let row = old.get(reference.key);
-        if (row?.boundReference !== reference) { row?.remove(); row = null; }
-        if (!row) box.append(ReferencePrep.mount(reference, {
-          prefix: primary ? 'library-new' : `library-new-${reference.key}`, changed: saveSoon,
-          allowLibrary: false, ...(!primary ? { remove: () => {
-            ReferencePrep.cancel(reference);
-            flow.voiceDraft.extraReferences = flow.voiceDraft.extraReferences.filter(item => item !== reference);
-            renderVoiceDraft(); saveSoon();
-          } } : {}),
-        }));
-        old.delete(reference.key);
-      }
-      for (const row of old.values()) row.remove();
-    };
     function renderVoiceDraft() {
-      draw(clips, [flow.voiceDraft.main], true); draw(extras, flow.voiceDraft.extraReferences || []);
+      const current = clips.firstElementChild;
+      if (current?.boundReference !== flow.voiceDraft.main) {
+        current?.remove();
+        clips.append(ReferencePrep.mount(flow.voiceDraft.main, {
+          prefix: 'library-new', changed: saveSoon, allowLibrary: false,
+        }));
+      }
       enhanceAllSelects(); StudioAudio.enhance(preparation);
     }
     form.onsubmit = async event => {
@@ -1248,14 +1231,11 @@
       clearNote(); preparation.disabled = true; name.disabled = true; $('save-voice').disabled = true;
       try {
         if (!name.value.trim()) throw new Error(t('Voice name must not be empty'));
-        const references = [];
-        for (const clip of [original.main, ...(original.extraReferences || [])]) {
-          references.push(...await ReferencePrep.readAll(clip, 0));
-        }
+        const references = await ReferencePrep.readAll(original.main, 0);
         if (!references.length) throw new Error(t('Choose an audio file.'));
         await post('/api/voices/from-references', { name: name.value, references });
-        for (const clip of [original.main, ...(original.extraReferences || [])]) ReferencePrep.cancel(clip);
-        flow.voiceDraft = { main: ReferencePrep.fresh(), extraReferences: [] };
+        ReferencePrep.cancel(original.main);
+        flow.voiceDraft = { main: ReferencePrep.fresh(), name: '' };
         name.value = ''; renderVoiceDraft();
         await loadVoices(); saveSoon(); dialog.close();
       } catch (error) {
@@ -1929,7 +1909,7 @@
       submit: send,
     }, flow.data.drafts.audio_editor?.value);
     const savedVoice = flow.data.drafts.voice?.value;
-    if (savedVoice?.main) flow.voiceDraft = savedVoice;
+    if (savedVoice?.main) flow.voiceDraft = { main: savedVoice.main, name: savedVoice.name || '' };
     configureVoiceLibrary();
     const savedScene = flow.data.drafts.scene?.value;
     if (savedScene) {

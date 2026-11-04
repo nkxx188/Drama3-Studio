@@ -47,7 +47,12 @@ def main():
     folder = ROOT / ".cache/studio-ui-acceptance" / uuid.uuid4().hex[:10]
     state = ui.STATE = ui.AppState(data_root=folder / "ui_data")
     state.asr.model_dir = folder / "missing-asr-model"
-    state.checkpoint = next((ROOT / "checkpoints/drama-3-gguf-q8").glob("*.gguf")).resolve()
+    checkpoint = next((path for directory in (
+        "drama-3-20261029-gguf-q8", "drama-3-gguf-q8",
+    ) for path in (ROOT / "checkpoints" / directory).glob("*.gguf")), None)
+    if checkpoint is None:
+        raise RuntimeError("Library UI acceptance requires a local Drama 3 GGUF checkpoint.")
+    state.checkpoint = checkpoint.resolve()
     frames, rate = 128, 44100
     waveform = .2 * np.sin(np.arange(frames * 2048) / rate * 2 * np.pi * 220)
     source = folder / "reference.wav"

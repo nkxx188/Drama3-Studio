@@ -268,6 +268,13 @@ def test_voice_library_has_reusable_add_dialog_and_compact_preview_tiles():
     dialog = HTML.index('<dialog id="voice-library-dialog"')
     assert dialog < HTML.index('id="voice-form"') < HTML.index('</dialog>', dialog)
     assert "voice-tile-preview" in JS
+    studio = (ROOT / "ui/studio.js").read_text(encoding="utf-8")
+    add_dialog = studio[studio.index("function configureVoiceLibrary()"):
+                        studio.index("function renderExtraReferences()")]
+    assert "additional-references" not in add_dialog
+    assert "extraReferences" not in add_dialog
+    assert "command('Add reference'" not in add_dialog
+    assert "await ReferencePrep.readAll(original.main, 0)" in add_dialog
 
 
 def test_voice_design_reuses_the_physical_script_direction_and_submit_controls():
