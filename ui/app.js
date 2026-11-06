@@ -441,6 +441,7 @@ async function loadCapabilities() {
   } catch (error) { state.capabilityError = error.message; setEngine(state.hardware); }
 }
 const gib = bytes => `${(Number(bytes || 0) / 1024 ** 3).toFixed(2)} GiB`;
+const preferredDownloadModelId = 'gguf-8bit-f32-routers-bf16-embed-head-experts-q4-k-s';
 const modelDownloadActive = task => task?.operation === 'download'
   && ['queued', 'running', 'cancelling'].includes(task?.status);
 function modelDownloadSourceLabel(source) {
@@ -455,16 +456,18 @@ function renderModelDownloadCatalog() {
   if (!select) return;
   const active = modelDownloadActive(state.modelTask);
   const pending = active ? state.modelTask.model_id : select.value;
+  const models = [...state.modelCatalog].sort((first, second) =>
+    Number(second.id.startsWith('gguf-')) - Number(first.id.startsWith('gguf-')));
   select.replaceChildren();
-  for (const model of state.modelCatalog) {
+  for (const model of models) {
     const label = model.id === 'int4' ? 'INT4' : model.label;
     const option = new Option(t(label), model.id);
     option.dataset.i18n = label;
     option.dataset.description = `${model.format} · ${gib(model.total_bytes)}`;
     select.add(option);
   }
-  if (state.modelCatalog.some(model => model.id === pending)) select.value = pending;
-  else if (state.modelCatalog.length) select.value = state.modelCatalog[0].id;
+  if (models.some(model => model.id === pending)) select.value = pending;
+  else if (models.length) select.value = models.find(model => model.id === preferredDownloadModelId)?.id || models[0].id;
   else select.add(new Option(
     t(state.modelDownloadAvailable ? 'Loading model list…' : 'Restart Studio to enable model downloads.'), ''));
   const model = selectedDownloadModel();

@@ -5,129 +5,207 @@
       "id": "fp8",
       "label": "Official FP8 / BF16",
       "format": "FP8",
-      "target": "drama-3-fp8",
+      "target": "drama-3-20261029-fp8",
       "kind": "official",
       "repo": "fishaudio/drama-3",
-      "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
-      "hf_revision": "e0a9218aa48888270f06ef1ed9ea67622c0e17d2",
+      "revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216",
+      "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216",
       "sources": [
         "huggingface",
         "modelscope"
       ],
       "files": [
         {
-          "name": ".gitattributes",
-          "size": 2197,
-          "sha256": "be3062e448b5c6faeb638f985aaeb03c2df87b13a8e79fceb3311c5bb557e24b",
-          "huggingface_compatible": false
-        },
-        {
           "name": "LICENSE",
           "size": 19685,
           "sha256": "733a32442087acbda12ecafe8e71eb8ee5890c89b50ce7ac4ea3777faa3c823e",
-          "huggingface_compatible": true
+          "huggingface_compatible": true,
+          "revision": "ca0541ba6cd4b8ec1dbdf84ccba4b2b074fba44e",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
           "name": "README.md",
-          "size": 7583,
-          "sha256": "611b5578a019b0b2bd67f9b5133cf54f462861dab5bcdd3b5789d4de9acb3990",
-          "huggingface_compatible": false
+          "size": 7996,
+          "sha256": "6d147e079b87e0b9bb4e1c899f75da3e658754933457a3ca753ca9912d1f5e10",
+          "huggingface_compatible": true,
+          "revision": "ad18408cd49d5a6176b9ea109311648e67c993e0",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
           "name": "chat_template.jinja",
           "size": 7756,
           "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
-          "huggingface_compatible": true
+          "huggingface_compatible": true,
+          "revision": "67df3ae0a844cdabdce1b3258be7baaa9174dbe7",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
           "name": "codec.pth",
           "size": 1871099728,
           "sha256": "74fc41c5a7151c6f350af8bd7e5d6e3accfcc7f3dfbfac23afd35af07052bb2f",
-          "huggingface_compatible": true
+          "huggingface_compatible": true,
+          "revision": "0d8b1b5c0e87fafbffa44ca96d05b72c92c41811",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
           "name": "config.json",
-          "size": 5535,
-          "sha256": "4b13a31b504cf54181f52df5bbb27604f5cc4b77b6e90a12ab85d62e0d70b693",
-          "huggingface_compatible": true
+          "size": 5534,
+          "sha256": "aea53f0f2b9a15023fc0f8eb0f42360663671c99814037bada6867d508010111",
+          "huggingface_compatible": true,
+          "revision": "2d99cbffc2b9a078e388768bc2ed501e2a762090",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
-          "name": "configuration.json",
-          "size": 72,
-          "sha256": "30458d769bcf25aa4e8fd30bbde901f817e382a49f7c7da8c4380dd97b616876",
-          "huggingface_compatible": false
+          "name": "model-00001-of-00015.safetensors",
+          "size": 2862881576,
+          "sha256": "a1b7af15210d2eda2d75a2cf976295f80e345855b745b109aa3ce49d26a44497",
+          "huggingface_compatible": true,
+          "revision": "7fe170be71f2003290fda1e7ee4fc7b0d8f7e654",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
-          "name": "model-00001-of-00008.safetensors",
-          "size": 5000202800,
-          "sha256": "e486b4f438d0b2df28846e41e599bd2077a64a825893ed0371b332a40dc4b49b",
-          "huggingface_compatible": true
+          "name": "model-00002-of-00015.safetensors",
+          "size": 2628610248,
+          "sha256": "a95e113c6f32f8fcb23ecb618cd4384fad6358f3c0ac31cfbf352daf5370db94",
+          "huggingface_compatible": true,
+          "revision": "a61032ddc78577129200c00e88428b194eb9c851",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
-          "name": "model-00002-of-00008.safetensors",
-          "size": 5000496824,
-          "sha256": "a67b726fe950ad57ebc15696009bde4a7dbbdc3645b42fa7d77e3a5fa1d70262",
-          "huggingface_compatible": true
+          "name": "model-00003-of-00015.safetensors",
+          "size": 2628610224,
+          "sha256": "a34d0952d6369f5c73e6ae06138ef96bc6a3af9bb259c4e41425a33706cf5b68",
+          "huggingface_compatible": true,
+          "revision": "3679e7b632fb044551b60f15a119a976543580d5",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
-          "name": "model-00003-of-00008.safetensors",
-          "size": 5000988520,
-          "sha256": "acfdeb67b8c4cb4784d887339e85bddbc5d7b9be3bbee82e40fa10ffe305d965",
-          "huggingface_compatible": true
+          "name": "model-00004-of-00015.safetensors",
+          "size": 2628611792,
+          "sha256": "13ac368d87441a18752e424e485b711a115ea1084e3a18ab13276e73eedef8b4",
+          "huggingface_compatible": true,
+          "revision": "00d757b25f05ff4fb2ed7dc799f2122384cb75bd",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
-          "name": "model-00004-of-00008.safetensors",
-          "size": 5000496392,
-          "sha256": "fa2960bddf128f51c3d4d74a1a942e34f61cc7ea294d10aec27f79dc10455c9f",
-          "huggingface_compatible": true
+          "name": "model-00005-of-00015.safetensors",
+          "size": 2641525264,
+          "sha256": "c432fa0dac97471f0d625bc67eb94fe084ca2e5ecd8865f457b751479b50e363",
+          "huggingface_compatible": true,
+          "revision": "1396e55522c63ab6a26417c2030e7e87a67166ab",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
-          "name": "model-00005-of-00008.safetensors",
-          "size": 5000227096,
-          "sha256": "a49ed8717c47e12b354a711c71ecde8be153bad704ca0a25d4805534f4405971",
-          "huggingface_compatible": true
+          "name": "model-00006-of-00015.safetensors",
+          "size": 2628614896,
+          "sha256": "661a31433747fa9d029632a61350ea9eb105bf7276d013ff0901b6a939fb2dcb",
+          "huggingface_compatible": true,
+          "revision": "3c6ba04e4498283538f0e50b60a02444fc25497c",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
-          "name": "model-00006-of-00008.safetensors",
-          "size": 4984792768,
-          "sha256": "8867c0e3d600ebf28cf4734fc433dc98061fb990940e07b192ec0356ba1ff223",
-          "huggingface_compatible": true
+          "name": "model-00007-of-00015.safetensors",
+          "size": 2628614880,
+          "sha256": "4a7574b5c238f424b37aa945a736da1994a26bd38b86bf3ec4abf524c0969cc8",
+          "huggingface_compatible": true,
+          "revision": "119a8a7e57b7fb93eba49c725c12514bb06d2473",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
-          "name": "model-00007-of-00008.safetensors",
-          "size": 4977946704,
-          "sha256": "51e7d473f8a270bf79b2896a6ea4f19162eeec5b1ea1c5a2ba7dc7750511dbda",
-          "huggingface_compatible": true
+          "name": "model-00008-of-00015.safetensors",
+          "size": 2628614888,
+          "sha256": "7fac6d1e899939eb03c9cf28a33b0bfd9c7a599298662f26d9a59d64c96d007f",
+          "huggingface_compatible": true,
+          "revision": "d14dd8610dfa93ccea2689e42613096180d0929a",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
-          "name": "model-00008-of-00008.safetensors",
-          "size": 4638423240,
-          "sha256": "c5b065cce3b3b851369dfdb5a3b60f6abf2699121071c2b1a9dfd84acb7b8f7d",
-          "huggingface_compatible": true
+          "name": "model-00009-of-00015.safetensors",
+          "size": 2641525264,
+          "sha256": "fcf1313744ea5978e363b2bb49c3b66748d886d79f3ec102f4346a462385de4b",
+          "huggingface_compatible": true,
+          "revision": "5dff30768bfa74ad7d7f5cc5c44e3a33ac61b2e8",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
+        },
+        {
+          "name": "model-00010-of-00015.safetensors",
+          "size": 2628614896,
+          "sha256": "6db3f7cd9d49806ae4f17b6f6d17a0c8dd9686aee57728da1b50ec0c6139a629",
+          "huggingface_compatible": true,
+          "revision": "4a5b89753e17eccaf165e733436b31eb2dbaef6a",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
+        },
+        {
+          "name": "model-00011-of-00015.safetensors",
+          "size": 2628614880,
+          "sha256": "a9027ef4db30bb1875bd2bc93b80bae785c5943807efe63bf09834b66e49fc16",
+          "huggingface_compatible": true,
+          "revision": "f9e88b84eaaa48d002162da4de6cc7f8d4811f84",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
+        },
+        {
+          "name": "model-00012-of-00015.safetensors",
+          "size": 2628614888,
+          "sha256": "c16fea955e973010064ff7bc907a6fa67821956e0de23f74807c31fb48339f3a",
+          "huggingface_compatible": true,
+          "revision": "90caf3fbedc0687c5af3b4f087604d9b08bd4100",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
+        },
+        {
+          "name": "model-00013-of-00015.safetensors",
+          "size": 2641525264,
+          "sha256": "64861c8e1ee13a0cbb5ec9431f402cee33edcbcbc744ff63091fe3a997f0da19",
+          "huggingface_compatible": true,
+          "revision": "8b939d8446f7dbcc24fead1d47e4dda03ef40056",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
+        },
+        {
+          "name": "model-00014-of-00015.safetensors",
+          "size": 3749111392,
+          "sha256": "ba5319475a6258984143b69af8380f166df8179af90378f2f4e02694cad87baf",
+          "huggingface_compatible": true,
+          "revision": "a09135717ee8ab3c8af27349de330cd3431b4390",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
+        },
+        {
+          "name": "model-00015-of-00015.safetensors",
+          "size": 1409461016,
+          "sha256": "1e2ddf01c1be73fb19f3022c28e90d24e730c1bc759e5de78083afb39aab3fb7",
+          "huggingface_compatible": true,
+          "revision": "55ae2ebe44b69198d7d28bcc024cd408152fd060",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
           "name": "model.safetensors.index.json",
-          "size": 6880197,
-          "sha256": "7a2d824d4b073963a816f0d7e3b2e33bac89ae10c691bf8652325e61abc9f5c0",
-          "huggingface_compatible": true
+          "size": 6880196,
+          "sha256": "a8e9aca4e9fddca51f03fad63f52c82c470e98e28b6b0b1b1562dbe6456b50bb",
+          "huggingface_compatible": true,
+          "revision": "c76deb4e22c0cc50798389621ba0e3a5a33dac49",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
           "name": "special_tokens_map.json",
           "size": 102779,
           "sha256": "08aed9e321dc05275ac68cf883bfa96006b3fc09ff5cccadf262b6bce0873adb",
-          "huggingface_compatible": true
+          "huggingface_compatible": true,
+          "revision": "f092d4f5b189552ec33329b4a2820db141247749",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
           "name": "tokenizer.json",
           "size": 20791070,
           "sha256": "0e9b9db76b2f0389b04b6ef057a2ac3b89100b7e96f2dd7034d19580a09654d6",
-          "huggingface_compatible": true
+          "huggingface_compatible": true,
+          "revision": "16b4f6c745cd110715ee595e4666e6d82688945e",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         },
         {
           "name": "tokenizer_config.json",
           "size": 103580,
           "sha256": "00e800279d8436c324b924e97872c7eacd2b19406aa0fe71eeb557b4cd53aa3e",
-          "huggingface_compatible": true
+          "huggingface_compatible": true,
+          "revision": "f693e8e10a346fc9114c46624f3735bcb3a7bc1b",
+          "hf_revision": "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
         }
       ]
     },
@@ -481,19 +559,19 @@
       "id": "gguf-4bit-experts-q4-k-s",
       "label": "GGUF Q4_K_S - 4-bit backbone",
       "format": "Q4_K_S / 4-bit backbone",
-      "target": "gguf-4bit-experts-q4-k-s",
+      "target": "gguf-4bit-experts-q4-k-s-20261029",
       "kind": "gguf",
       "repo": "Jmica/Drama-3-GGUF",
-      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
-      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
+      "hf_revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
       "sources": [
         "huggingface"
       ],
       "files": [
         {
           "name": "drama-3-backbone-4bit-experts-Q4_K_S.gguf",
-          "size": 23386029088,
-          "sha256": "ae65d77b4fe21d5d176cf9bb8123fa21982c65d6e40a32cbed1b85c31390fdb6",
+          "size": 23371670016,
+          "sha256": "5f71c8b52dc50ceaeb4c1fc99ba30db1333c0fbbaa4d6934fa6c7c7a3c9d3f62",
           "huggingface_compatible": true
         }
       ]
@@ -502,19 +580,19 @@
       "id": "gguf-8bit-f32-routers-bf16-embed-head-experts-q4-k-s",
       "label": "GGUF Q4_K_S - full embedding/head",
       "format": "Q4_K_S / full embedding/head",
-      "target": "gguf-8bit-f32-routers-bf16-embed-head-experts-q4-k-s",
+      "target": "gguf-8bit-f32-routers-bf16-embed-head-experts-q4-k-s-20261029",
       "kind": "gguf",
       "repo": "Jmica/Drama-3-GGUF",
-      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
-      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
+      "hf_revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
       "sources": [
         "huggingface"
       ],
       "files": [
         {
           "name": "drama-3-backbone-8bit-F32-routers-BF16-embed-head-experts-Q4_K_S.gguf",
-          "size": 25634020064,
-          "sha256": "ea8b2e595026e6ec8570606d8633415ed3b016659f8415ba24de315e8ce60aeb",
+          "size": 25634025024,
+          "sha256": "415e20ee598f51409864517b8e8b5efd51e50c45583a37c8ffaa70952fa15bd5",
           "huggingface_compatible": true
         }
       ]
@@ -523,19 +601,19 @@
       "id": "gguf-8bit-f32-routers-experts-q4-k-s",
       "label": "GGUF Q4_K_S - FP32 routers",
       "format": "Q4_K_S / FP32 routers",
-      "target": "gguf-8bit-f32-routers-experts-q4-k-s",
+      "target": "gguf-8bit-f32-routers-experts-q4-k-s-20261029",
       "kind": "gguf",
       "repo": "Jmica/Drama-3-GGUF",
-      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
-      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
+      "hf_revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
       "sources": [
         "huggingface"
       ],
       "files": [
         {
           "name": "drama-3-backbone-8bit-F32-routers-experts-Q4_K_S.gguf",
-          "size": 24665234144,
-          "sha256": "2e3da9f7c36f51f1eda7490c110469847757c0f7e715b9bddf65b8aeb95b14d7",
+          "size": 24665239072,
+          "sha256": "d0da72ffdbba62965c92653ed40d0851ccc80f335de02bc7d8a7c61b305c9011",
           "huggingface_compatible": true
         }
       ]
@@ -544,19 +622,19 @@
       "id": "gguf-8bit-experts-q2-k",
       "label": "GGUF Q2_K",
       "format": "Q2_K",
-      "target": "gguf-8bit-experts-q2-k",
+      "target": "gguf-8bit-experts-q2-k-20261029",
       "kind": "gguf",
       "repo": "Jmica/Drama-3-GGUF",
-      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
-      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
+      "hf_revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
       "sources": [
         "huggingface"
       ],
       "files": [
         {
           "name": "drama-3-backbone-8bit-experts-Q2_K.gguf",
-          "size": 17053639872,
-          "sha256": "041be86fbb53bf4002d59bf7d5f0c99c321e0b21f5aa3b53fec380eec6f892d3",
+          "size": 17053647360,
+          "sha256": "5cb86588eff6404f4482830cfd3d69713f27115c02530a29f772535262fb7826",
           "huggingface_compatible": true
         }
       ]
@@ -565,19 +643,19 @@
       "id": "gguf-8bit-experts-q3-k-s",
       "label": "GGUF Q3_K_S",
       "format": "Q3_K_S",
-      "target": "gguf-8bit-experts-q3-k-s",
+      "target": "gguf-8bit-experts-q3-k-s-20261029",
       "kind": "gguf",
       "repo": "Jmica/Drama-3-GGUF",
-      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
-      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
+      "hf_revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
       "sources": [
         "huggingface"
       ],
       "files": [
         {
           "name": "drama-3-backbone-8bit-experts-Q3_K_S.gguf",
-          "size": 20325196992,
-          "sha256": "b946a8c9806deba559590b98e37ffc9e0957109263e111513734fa93284db16b",
+          "size": 20325204480,
+          "sha256": "c3f86b7e831e05769f21561950d6604d48edda684aa123b7ca763314fc5a6223",
           "huggingface_compatible": true
         }
       ]
@@ -586,19 +664,19 @@
       "id": "gguf-8bit-experts-q4-k-s",
       "label": "GGUF Q4_K_S",
       "format": "Q4_K_S",
-      "target": "gguf-8bit-experts-q4-k-s",
+      "target": "gguf-8bit-experts-q4-k-s-20261029",
       "kind": "gguf",
       "repo": "Jmica/Drama-3-GGUF",
-      "revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
-      "hf_revision": "17a5b40c5dc2c2be986f5371a7e650108b828e29",
+      "revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
+      "hf_revision": "060acc8e5d9e5d16baf647c775dfe1a1438f5f35",
       "sources": [
         "huggingface"
       ],
       "files": [
         {
           "name": "drama-3-backbone-8bit-experts-Q4_K_S.gguf",
-          "size": 24596497888,
-          "sha256": "05af716baf78e7c20863b9ccebb3ebdeca9607dd3ea7d0b72c35079e675b212b",
+          "size": 24603394560,
+          "sha256": "4ffc1028e0133497a551c5661a6b709639c4ac0da38b8d421ee51f52ab4b0574",
           "huggingface_compatible": true
         }
       ]

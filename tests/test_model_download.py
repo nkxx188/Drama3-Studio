@@ -236,13 +236,31 @@ def test_pinned_paths_cannot_escape_the_download_directory(tmp_path, name):
 
 def test_packaged_manifest_has_all_shards_and_correct_source_compatibility():
     files = manifest()
+    assert len(files) == 24
+    assert sum(row["name"].endswith(".safetensors") for row in files) == 15
+    assert sum(row["size"] for row in files) == 41_502_569_692
+    assert all(row["huggingface_compatible"] for row in files)
+    assert all(row["hf_revision"] == "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216" for row in files)
+    assert all(re.fullmatch(r"[0-9a-f]{40}", row["revision"]) for row in files)
+    indexed = {row["name"]: row for row in files}
+    assert indexed["codec.pth"]["huggingface_compatible"]
+    assert indexed["README.md"]["huggingface_compatible"]
+    assert "configuration.json" not in indexed
+
+
+def test_legacy_manifest_keeps_the_original_shards_and_source_revisions(tmp_path):
+    from drama_low_vram.model_download import LEGACY_HF_REVISION, LEGACY_REVISION
+
+    files = manifest(legacy=True)
     assert len(files) == 19
     assert sum(row["name"].endswith(".safetensors") for row in files) == 8
     assert sum(row["size"] for row in files) == 41_502_594_526
-    indexed = {row["name"]: row for row in files}
-    assert indexed["codec.pth"]["huggingface_compatible"]
-    assert not indexed["README.md"]["huggingface_compatible"]
-    assert not indexed["configuration.json"]["huggingface_compatible"]
+    assert all(row["hf_revision"] == LEGACY_HF_REVISION for row in files)
+    assert all(row["revision"] == LEGACY_REVISION for row in files)
+    downloader = Downloader(tmp_path, files, 1, 1024)
+    shard = next(row for row in files if row["name"].endswith(".safetensors"))
+    assert f"/resolve/{LEGACY_HF_REVISION}/" in downloader.direct_url(shard, "huggingface")
+    assert f"Revision={LEGACY_REVISION}&" in downloader.direct_url(shard, "modelscope")
 
 
 def test_folder_inspection_is_metadata_only_and_missing_paths_are_not_created(tmp_path):

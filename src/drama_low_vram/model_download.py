@@ -19,8 +19,10 @@ from pathlib import Path
 
 
 MODEL = "fishaudio/drama-3"
-REVISION = "f693e8e10a346fc9114c46624f3735bcb3a7bc1b"
-HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+REVISION = "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
+HF_REVISION = REVISION
+LEGACY_REVISION = "f693e8e10a346fc9114c46624f3735bcb3a7bc1b"
+LEGACY_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 API = f"https://modelscope.cn/api/v1/models/{MODEL}/repo"
 ROOT = Path(__file__).resolve().parents[2]
 CONTEXT = ssl.create_default_context()
@@ -35,16 +37,22 @@ def open_url(url: str, headers: dict[str, str] | None = None):
     return urllib.request.urlopen(request, timeout=30, context=CONTEXT)
 
 
-def manifest() -> list[dict]:
+def manifest(*, legacy=False) -> list[dict]:
+    filename = "drama3-manifest.json" if legacy else "drama3-manifest-20261029.json"
+    revision = LEGACY_REVISION if legacy else REVISION
+    hf_revision = LEGACY_HF_REVISION if legacy else HF_REVISION
+    shard_count = 8 if legacy else 15
     document = json.loads(
-        Path(__file__).with_name("data").joinpath("drama3-manifest.json").read_text(encoding="utf-8"))
-    if (document["model"] != MODEL or document["revision"] != REVISION
-            or document["equivalent_huggingface_weight_revision"] != HF_REVISION):
+        Path(__file__).with_name("data").joinpath(filename).read_text(encoding="utf-8"))
+    if (document["model"] != MODEL or document["revision"] != revision
+            or document["equivalent_huggingface_weight_revision"] != hf_revision):
         raise RuntimeError("Bundled checkpoint manifest identity mismatch")
     files = document["files"]
-    if len([f for f in files if f["name"].endswith(".safetensors")]) != 8:
-        raise RuntimeError("Expected all eight Drama 3 safetensors shards")
-    return files
+    if len([f for f in files if f["name"].endswith(".safetensors")]) != shard_count:
+        raise RuntimeError(f"Expected all {shard_count} Drama 3 safetensors shards")
+    # Keep each channel pinned even when verifying or resuming an older install.
+    return [{**row, "revision": row.get("revision", revision),
+             "hf_revision": row.get("hf_revision", hf_revision)} for row in files]
 
 
 def sha256_file(path: Path) -> str:
@@ -476,7 +484,7 @@ class Downloader:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--directory", type=Path, default=ROOT / "checkpoints" / "drama-3")
+    parser.add_argument("--directory", type=Path, default=ROOT / "checkpoints" / "drama-3-20261029-fp8")
     parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--chunk-mib", type=int, default=64)
     parser.add_argument("--source", choices=("auto", "modelscope", "huggingface"), default="auto")

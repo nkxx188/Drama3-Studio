@@ -42,15 +42,19 @@ def _quantization_method(directory):
 
 
 def official_checkpoint_files(directory):
-    """Recognize the newer official layout by its bundled immutable index hash."""
-    document = json.loads(Path(__file__).with_name("data").joinpath(
-        "drama3-manifest-20261029.json").read_text(encoding="utf-8"))
-    index = next(row for row in document["files"] if row["name"] == "model.safetensors.index.json")
-    path = Path(directory) / index["name"]
-    if (path.is_file() and path.stat().st_size == index["size"]
-            and sha256_file(path) == index["sha256"]):
-        return document["files"]
-    return manifest()
+    """Recognize either trusted index; use the current snapshot for new installs."""
+    current = manifest()
+    path = Path(directory) / "model.safetensors.index.json"
+    if path.is_file():
+        size, digest = path.stat().st_size, None
+        for files in (current, manifest(legacy=True)):
+            index = next(row for row in files if row["name"] == path.name)
+            if size == index["size"]:
+                if digest is None:
+                    digest = sha256_file(path)
+                if digest == index["sha256"]:
+                    return files
+    return current
 
 
 def inspect_checkpoint(directory, *, files=None):

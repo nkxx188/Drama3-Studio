@@ -100,7 +100,8 @@ def test_model_settings_keep_local_setup_and_add_model_catalog_downloader():
     assert 'path in ("/api/model/roots/add", "/api/model/roots/remove")' in server
     assert "fallbackModelLocations" not in JS
     assert "filedialog.askdirectory" in server
-    assert "GGUF" not in HTML and "GGUF" in i18n
+    picker = HTML[HTML.index('<div class="model-download-picker">'):HTML.index('<div class="model-download-footer">')]
+    assert "GGUF" not in picker and "GGUF" in i18n
     for marker in ('id="model-download-choice"', 'id="model-download-sources"',
                    'id="download-model"', 'id="model-download-task"',
                    'id="model-download-progress"', 'id="cancel-model-download"'):
@@ -113,6 +114,50 @@ def test_model_settings_keep_local_setup_and_add_model_catalog_downloader():
         assert marker in server
     assert "download-catalog.json" in catalog
     assert "parallel chunks and SHA256 verification" in i18n
+
+
+def test_model_downloader_has_an_independent_quark_manual_download_link():
+    from html.parser import HTMLParser
+
+    class LinkParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.links = []
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            if tag == "a" and attributes.get("id") == "model-download-quark":
+                self.links.append(attributes)
+
+    download = HTML[HTML.index('<section class="model-download"'):HTML.index('</section>', HTML.index('<section class="model-download"'))]
+    parser = LinkParser()
+    parser.feed(download)
+    assert len(parser.links) == 1
+    link = parser.links[0]
+    assert link["href"] == "https://pan.quark.cn/s/9e5a6c619f4a"
+    assert link["target"] == "_blank"
+    assert {"noopener", "noreferrer"} <= set(link["rel"].split())
+    assert "model-source-option" not in link["class"].split()
+    assert "data-source" not in link and "download" not in link
+    assert download.index('id="model-download-task"') < download.index('id="model-download-quark"')
+    assert 'data-i18n="GGUF Q4 / Q8 · Manual download"' in download
+    i18n = (ROOT / "ui/i18n.js").read_text(encoding="utf-8")
+    for label in ("Quark Drive", "GGUF Q4 / Q8 · Manual download", "Open Quark Drive"):
+        assert f"['{label}'," in i18n
+
+
+def test_model_downloader_promotes_gguf_without_overwriting_user_selection():
+    recommendation = "GGUF models are recommended for faster generation. Downloads can resume after interruption."
+    assert f'data-i18n="{recommendation}"' in HTML
+    i18n = (ROOT / "ui/i18n.js").read_text(encoding="utf-8")
+    assert f"['{recommendation}'," in i18n
+    assert "推荐使用 GGUF 模型，速度更快。" in i18n
+    assert "const preferredDownloadModelId = 'gguf-8bit-f32-routers-bf16-embed-head-experts-q4-k-s';" in JS
+    assert "const models = [...state.modelCatalog].sort" in JS
+    assert "Number(second.id.startsWith('gguf-')) - Number(first.id.startsWith('gguf-'))" in JS
+    assert "const pending = active ? state.modelTask.model_id : select.value;" in JS
+    assert "if (models.some(model => model.id === pending)) select.value = pending;" in JS
+    assert "models.find(model => model.id === preferredDownloadModelId)?.id || models[0].id" in JS
 
 
 def test_shared_visual_tokens_define_type_boundaries_and_control_geometry():
