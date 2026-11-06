@@ -460,8 +460,23 @@ def test_result_workspaces_keep_independent_ids_and_reject_cross_page_renders():
     assert "resultWorkspaceFor(job) !== state.resultWorkspace" in JS
     assert "active_job_id: state.resultJobs.generate?.id || null" in studio
     assert "active_job_id: state.resultJobs.scene?.id || null" in studio
-    assert "await restoreWorkspaceResults(draft?.active_job_id, savedScene?.active_job_id)" in studio
+    assert "await restoreWorkspaceResults(draft?.active_job_id, savedScene?.active_job_id, {" in studio
     assert "showWorkspaceResult(event.detail)" in studio
+
+
+def test_history_draft_restores_its_result_without_reclassifying_stored_editor_jobs():
+    studio = (ROOT / "ui/studio.js").read_text(encoding="utf-8")
+    assert "async function restoredVersionResult(source, workspace, version = null)" in JS
+    assert "delete studio.result_scope; delete studio.edit_source" in JS
+    assert "if (source.part_index !== undefined)" in JS
+    assert "active_result_source: copy(state.resultJobs.generate?.restoredSource || null)" in studio
+    assert "active_result_source: copy(state.resultJobs.scene?.restoredSource || null)" in studio
+    assert "if (id && sources[workspace]?.job_id === id)" in JS
+    assert "if (updated && !current.restoredSource)" in JS
+    assert "const result = await restoredVersionResult(source, scene ? 'scene' : 'generate', version)" in studio
+    assert "state.resultJobs.generate = result" in studio and "state.resultJobs.scene = result" in studio
+    assert "$('text').value = draftTranscript(version.text)" in studio
+    assert "return /<\\|speaker:\\d+\\|>/.test(unmarked) ? text : unmarked" in studio
 
 
 def test_history_play_starts_audio_directly_without_a_player_popover():

@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--polish-checks", action="store_true")
     parser.add_argument("--result-controls-checks", action="store_true")
     parser.add_argument("--generation-settings-checks", action="store_true")
+    parser.add_argument("--draft-restore-checks", action="store_true")
     arguments = parser.parse_args()
     import numpy as np
     import soundfile as sf
@@ -182,6 +183,7 @@ def main():
         result = subprocess.run(
             [shutil.which("node") or "node", str(ROOT / "tools" / (
                 "validate_audio_import_ui.cjs" if arguments.audio_import_checks else
+                "validate_draft_restore_ui.cjs" if arguments.draft_restore_checks else
                 "validate_generation_settings_ui.cjs" if arguments.generation_settings_checks else
                 "validate_reference_switch_ui.cjs" if arguments.reference_switch_checks else
                 "validate_reference_prewarm_ui.cjs" if arguments.reference_prewarm_checks else

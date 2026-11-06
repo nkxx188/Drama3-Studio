@@ -1415,13 +1415,36 @@ function resultWorkspaceFor(job) {
   return layout ? layout === 'scene' ? 'scene' : 'generate'
     : job.mode === 'scene' || job.recipe?.mode === 'scene' ? 'scene' : 'generate';
 }
-async function restoreWorkspaceResults(singleId, sceneId) {
+async function restoredVersionResult(source, workspace, version = null) {
+  const job = await api(`/api/jobs/${encodeURIComponent(source.job_id)}`);
+  version ||= await api('/api/studio/version', { method: 'POST', body: JSON.stringify(source) });
+  const studio = { ...(version.studio || {}), layout: workspace === 'scene' ? 'scene' : 'single' };
+  delete studio.result_scope; delete studio.edit_source;
+  // Only this explicit draft view changes workspaces; the stored edit job stays immutable.
+  const result = { ...job, studio, restoredSource: { ...source }, recipe: version.recipe,
+    output: version.audio_missing ? null : version.output, take_file: version.take_file };
+  if (source.part_index !== undefined) {
+    result.mode = version.recipe.mode;
+    result.status = version.status;
+    result.events = [];
+    result.result = { ...version.timing_result, audio: version.take ? {
+      duration_seconds: version.take.duration_seconds,
+    } : {} };
+  }
+  return result;
+}
+async function restoreWorkspaceResults(singleId, sceneId, sources = {}) {
   const jobs = [...state.jobs];
   for (const id of new Set([singleId, sceneId].filter(Boolean))) {
     if (jobs.some(job => job.id === id)) continue;
     try { jobs.push(await api(`/api/jobs/${encodeURIComponent(id)}`)); } catch (_) { /* keep recent results available */ }
   }
   for (const [workspace, id] of [['generate', singleId], ['scene', sceneId]]) {
+    if (id && sources[workspace]?.job_id === id) {
+      try { state.resultJobs[workspace] = await restoredVersionResult(sources[workspace], workspace); }
+      catch (_) { state.resultJobs[workspace] = null; }
+      continue;
+    }
     state.resultJobs[workspace] = id === null ? null
       : jobs.find(job => job?.id === id && resultWorkspaceFor(job) === workspace)
         || jobs.find(job => job && resultWorkspaceFor(job) === workspace) || null;
@@ -1737,7 +1760,7 @@ async function loadJobs() {
     for (const workspace of ['generate', 'scene']) {
       const current = state.resultJobs[workspace];
       const updated = state.jobs.find(job => job.id === current?.id && resultWorkspaceFor(job) === workspace);
-      if (updated) state.resultJobs[workspace] = updated;
+      if (updated && !current.restoredSource) state.resultJobs[workspace] = updated;
     }
     if (state.model) state.model.busy = state.jobs.some(job => ['queued', 'running'].includes(job.status));
     renderModelPicker();

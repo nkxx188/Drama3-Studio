@@ -28,6 +28,10 @@
   };
   const plainText = text => text.replace(/<\|speaker:\d+\|>/g, '')
     .replace(/<\/?(whisper|emphasis|soft|fast|slow|stress|forceful)>/g, '').replace(/\[[^\]\n]*\]/g, '').trim();
+  const draftTranscript = text => {
+    const unmarked = text.replace(/^\s*<\|speaker:0\|>[ \t]*/, '');
+    return /<\|speaker:\d+\|>/.test(unmarked) ? text : unmarked;
+  };
   const fresh = layout => ({ work_id: uid(), segment_id: uid(), layout });
   const segmentsOf = job => job.result?.segments?.length ? job.result.segments
     : (job.events || []).filter(event => ['segment', 'audio'].includes(event.stage) && (event.path || event.output));
@@ -94,6 +98,7 @@
       libraryReferences: copy(flow.libraryReferences), restoredFrom: copy(task ? task.restoredFrom : flow.restoredFrom),
       restoredModel: task ? task.restoredModel : flow.restoredModel,
       active_job_id: state.resultJobs.generate?.id || null,
+      active_result_source: copy(state.resultJobs.generate?.restoredSource || null),
       design: { context: copy(flow.design), recipe: copy(flow.designRecipe),
         description: $('voice-description').value, active: voiceDesignActive(), legacy: copy(flow.designLegacy),
         contentVersion: 2, ...copy(flow.writing.design) },
@@ -109,6 +114,7 @@
   function sceneSnapshot() {
     return { ...copy(flow.scene), script: $('dialogue-script').value, scriptVersion: 1,
       active_job_id: state.resultJobs.scene?.id || null,
+      active_result_source: copy(state.resultJobs.scene?.restoredSource || null),
       generation: { random: $('scene-random-seed').checked, silenceRetry: $('scene-silence-retry').checked, form: Object.fromEntries(
         ['seed', 'max-chars', 'temperature', 'top-p', 'top-k']
           .map(id => [id, UiNumber.value($(`scene-${id}`))])) } };
@@ -144,6 +150,9 @@
   }
   async function restore(value) {
     value = migrateWritingDraft(retireContinuation(value));
+    if (value.restoredFrom && !value.operation && value.form?.text) {
+      value.form.text = draftTranscript(value.form.text);
+    }
     if (value.form?.['top-k'] === '30' || value.form?.['top-k'] === 30) value.form['top-k'] = '0';
     flow.restoring = true;
     try {
@@ -218,6 +227,12 @@
       }
       renderLibraryReferences(true); renderOperation();
     } finally { flow.restoring = false; }
+    if (flow.ready) {
+      await restoreWorkspaceResults(value.active_job_id, state.resultJobs.scene?.id || null, {
+        generate: value.active_result_source, scene: state.resultJobs.scene?.restoredSource,
+      });
+      showWorkspaceResult('generate');
+    }
     if (flow.ready && !voiceDesignActive()) resumeCloneTranscription();
   }
   function writingOf(value = {}) {
@@ -442,7 +457,7 @@
   }
   function findTake(path) {
     for (const job of [...Object.values(state.resultJobs), ...state.jobs, ...Object.values(flow.workJobs)].filter(Boolean)) {
-      if (job.take_file === path) return { job_id: job.id };
+      if (job.take_file === path) return job.restoredSource || { job_id: job.id };
       const rows = segmentsOf(job), index = rows.findIndex(row => row.take_file === path);
       if (index >= 0) return { job_id: job.id, part_index: rows[index].index ?? index };
     }
@@ -510,10 +525,10 @@
       post('/api/jobs', { ...payload, candidates: 1, seed: randomSeed() }).then(() => refresh()).catch(fail);
     }
   }
-  async function retry(source) {
+  async function retry(source, studio = null) {
     const version = await post('/api/studio/version', source);
     await send({ source_version: source, operation: 'retry', seed: randomSeed(),
-      studio: version.studio || flow.single });
+      studio: studio || version.studio || flow.single });
   }
   function menu(label, items) {
     const details = node('details', 'command-menu');
@@ -546,7 +561,7 @@
   }
   function enhanceResult(job, main) {
     const bar = main.querySelector('.result-actions');
-    const signature = `${job.id}:${state.capabilities?.director_revision}:${state.capabilities?.infill}`;
+    const signature = `${job.id}:${job.restoredSource?.part_index ?? 'all'}:${state.capabilities?.director_revision}:${state.capabilities?.infill}`;
     if (bar.dataset.creativeJob === signature) {
       const retry = bar.querySelector('.creative-retry');
       if (retry) { retry.hidden = !completeRecipe(job); retry.disabled = job.status !== 'complete'; }
@@ -555,8 +570,8 @@
     bar.querySelectorAll('.creative-action').forEach(item => item.remove());
     main.querySelectorAll(':scope > .creative-action').forEach(item => item.remove());
     bar.dataset.creativeJob = signature;
-    const source = { job_id: job.id };
-    const retryButton = command('Regenerate', () => guarded(() => retry(source)));
+    const source = job.restoredSource || { job_id: job.id };
+    const retryButton = command('Regenerate', () => guarded(() => retry(source, job.restoredSource ? job.studio : null)));
     retryButton.disabled = !completeRecipe(job) || job.status !== 'complete'; retryButton.classList.add('creative-action', 'creative-retry');
     retryButton.hidden = !completeRecipe(job);
     const resultBox = main.closest('.result-box');
@@ -586,7 +601,7 @@
     const source = { job_id: job.id, part_index: index };
     const bar = node('div', 'segment-creative-actions');
     bar.dataset.capabilities = signature;
-    bar.append(command('Regenerate', () => guarded(() => retry(source))),
+    bar.append(command('Regenerate', () => guarded(() => retry(source, job.restoredSource ? job.studio : null))),
       actions(job, source, true, row.closest('.result-box')));
     row.append(bar);
   }
@@ -682,12 +697,14 @@
     const previousSingle = capture(), previousScene = sceneSnapshot();
     const prepared = await post('/api/studio/prepare-restore', source);
     const { version, references } = prepared, recipe = version.recipe || {};
+    const scene = Boolean(recipe.characters?.length && recipe.lines?.length && recipe.mode !== 'infill');
+    const result = await restoredVersionResult(source, scene ? 'scene' : 'generate', version);
     const draftStudio = copy(version.studio || {});
     delete draftStudio.result_scope; delete draftStudio.edit_source;
     if (recipe.operation === 'continue' || recipe.mode === 'edit' && !recipe.operation) {
       recipe.mode = 'tts'; delete recipe.previous_take; delete recipe.previous_sources;
     }
-    recipeSettings(recipe, { scene: Boolean(recipe.characters?.length && recipe.lines?.length && recipe.mode !== 'infill') });
+    recipeSettings(recipe, { scene });
     if (recipe.mode === 'design') {
       stash(previousSingle);
       if (!voiceDesignActive()) switchVoiceSource('design');
@@ -696,6 +713,7 @@
       $('voice-description').value = recipe.voice_description || '';
       flow.writing.design = { text: version.text, direction: recipe.direction || '' };
       showWriting('design'); updateMode();
+      state.resultJobs.generate = result;
       view('generate'); renderOperation(); saveSoon(); return;
     }
     if (recipe.characters?.length && recipe.lines?.length && recipe.mode !== 'infill') {
@@ -714,6 +732,7 @@
         restoredFrom: source, restoredModel: recipe.model, restoredMode: recipe.mode,
         previous_take: recipe.previous_take, previous_sources: recipe.previous_sources,
         returnDrafts: [...(flow.scene.returnDrafts || []), current].slice(-4) });
+      state.resultJobs.scene = result;
       view('scene'); saveSoon(); return;
     }
     stash(previousSingle); flow.restoring = true;
@@ -731,7 +750,8 @@
       flow.single = { ...(Object.keys(draftStudio).length ? draftStudio : fresh('single')), layout: 'single' }; flow.operation = null;
       flow.restoredFrom = source; flow.restoredModel = recipe.model || null;
       $('mode').value = ['audio_stream', 'stream'].includes(recipe.mode) ? 'tts' : recipe.mode || 'tts';
-      $('text').value = version.text; $('direction').value = recipe.direction || '';
+      $('text').value = draftTranscript(version.text);
+      $('direction').value = recipe.direction || '';
       $('previous-take').value = recipe.previous_take || ''; $('source-take').value = recipe.source_take || '';
       if (recipe.mode === 'infill') {
         const take = await post('/api/takes/inspect', { path: recipe.source_take });
@@ -747,6 +767,7 @@
       }
       rememberWriting(); showWriting('reference');
       updateMode(); updateEditorMeta(); renderLibraryReferences(true); renderExtraReferences();
+      state.resultJobs.generate = result;
       renderOperation(); enhanceAllSelects(); view('generate');
       if (!version.complete_recipe) fail(t('Original settings unavailable; using the displayed settings.'));
     } finally { flow.restoring = false; }
@@ -1591,10 +1612,16 @@
       random.checked = flow.scene.generation.random !== false;
       $('scene-silence-retry').checked = flow.scene.generation.silenceRetry !== false;
     }
-    const back = command('Return to draft', () => {
+    const back = command('Return to draft', () => guarded(async () => {
       const previous = flow.scene.returnDrafts?.pop(), rest = copy(flow.scene.returnDrafts || []);
-      if (previous) restoreScene({ ...previous, returnDrafts: rest });
-    }, 'text-btn'); back.id = 'return-scene-draft'; back.hidden = true;
+      if (previous) {
+        restoreScene({ ...previous, returnDrafts: rest });
+        await restoreWorkspaceResults(state.resultJobs.generate?.id || null, previous.active_job_id, {
+          generate: state.resultJobs.generate?.restoredSource, scene: previous.active_result_source,
+        });
+        showWorkspaceResult('scene'); saveSoon();
+      }
+    }), 'text-btn'); back.id = 'return-scene-draft'; back.hidden = true;
     const operation = node('div', 'creative-operation'); operation.id = 'scene-operation'; operation.hidden = true;
     operation.append(back); $('view-scene').prepend(operation);
     const options = node('div', 'scene-strategies'); options.setAttribute('role', 'group');
@@ -1956,7 +1983,9 @@
       $('temperature').value = state.model?.runtime === 'gguf' ? '1' : '.7';
       $('top-p').value = state.model?.runtime === 'gguf' ? '.9' : '.7';
     }
-    await restoreWorkspaceResults(draft?.active_job_id, savedScene?.active_job_id);
+    await restoreWorkspaceResults(draft?.active_job_id, savedScene?.active_job_id, {
+      generate: draft?.active_result_source, scene: savedScene?.active_result_source,
+    });
     flow.ready = true; renderWorks(); syncControls();
     if (!voiceDesignActive()) resumeCloneTranscription();
     document.addEventListener('input', saveSoon);
