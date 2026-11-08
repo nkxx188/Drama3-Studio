@@ -44,7 +44,7 @@
     operation: null, returnDrafts: [], restoring: false, lastVoice: null,
     watch: null, lastSubmit: null, singleForm: null, singleReferences: [], libraryReferences: [],
     versionFocus: null, workJobs: {}, missingJobs: new Set(), historyLoads: new Map(),
-    failedHistories: new Set(), restoredFrom: null, restoredModel: null, designRecipe: null,
+    failedHistories: new Set(), restoredFrom: null, restoredModel: null, designRecipe: null, designHistoryReturn: false,
     contexts: new Map(), contextLoads: new Map(), streamDraft: null, switchingInput: false };
   flow.voiceDraft = { main: ReferencePrep.fresh(), name: '' };
   const formIds = ['text', 'direction', 'language', 'seed',
@@ -93,7 +93,7 @@
       random: $('random-seed').checked, silenceRetry: $('silence-retry').checked,
       autoplay: $('autoplay-audio').checked, streamLive: $('stream-live').checked,
       streamDraft: copy(flow.streamDraft),
-      operation: copy(task ? task.operation : flow.operation), returnDrafts: copy(flow.returnDrafts.slice(-4)),
+      operation: copy(task ? task.operation : flow.operation), returnDrafts: copy(flow.returnDrafts),
       references: copy(flow.singleReferences),
       libraryReferences: copy(flow.libraryReferences), restoredFrom: copy(task ? task.restoredFrom : flow.restoredFrom),
       restoredModel: task ? task.restoredModel : flow.restoredModel,
@@ -101,6 +101,7 @@
       active_result_source: copy(state.resultJobs.generate?.restoredSource || null),
       design: { context: copy(flow.design), recipe: copy(flow.designRecipe),
         description: $('voice-description').value, active: voiceDesignActive(), legacy: copy(flow.designLegacy),
+        historyReturn: flow.designHistoryReturn,
         contentVersion: 2, ...copy(flow.writing.design) },
       voices: selectedVoices(), upload: state.cloneUpload, transcript: $('clone-transcript').value,
       referenceCollapsed: !$('clone-upload-preview').open,
@@ -170,13 +171,15 @@
           delete flow.operation.restoreError;
         } catch (error) { flow.operation.restoreError = 'Source conditions could not be restored.'; fail(error); }
       }
-      flow.returnDrafts = value.returnDrafts || [];
+      flow.returnDrafts = value.returnDrafts?.length ? [creationDraft(value)] : [];
       flow.singleReferences.forEach(ReferencePrep.cancel);
       flow.singleReferences = value.references || [];
       flow.libraryReferences.forEach(ReferencePrep.cancel);
       flow.libraryReferences = value.libraryReferences || [];
       flow.restoredFrom = value.restoredFrom || null; flow.restoredModel = value.restoredModel || null;
       flow.design = value.design?.context || fresh('design'); flow.designRecipe = value.design?.recipe || null;
+      flow.designHistoryReturn = value.design?.historyReturn
+        ?? Boolean(value.design?.active && flow.designRecipe?.source && flow.returnDrafts.length);
       $('voice-description').value = value.design?.description || '';
       flow.designLegacy = value.design?.migrationBackup || value.design?.legacy || null;
       renderExtraReferences();
@@ -276,7 +279,7 @@
     ScriptEditor.reset($('text')); updateEditorMeta();
   }
   function switchVoiceSource(source, remember = true) {
-    if (remember) rememberWriting();
+    if (remember) { rememberWriting(); flow.designHistoryReturn = false; }
     if (source === 'design' && flow.voiceSource !== 'design') {
       flow.referenceTask = { mode: $('mode').value, operation: copy(flow.operation),
         restoredFrom: copy(flow.restoredFrom), restoredModel: flow.restoredModel,
@@ -305,11 +308,34 @@
     current.form = { ...current.form, 'previous-take': '', 'source-take': '' };
     return current;
   }
+  function creationDraft(value, { scene = false } = {}) {
+    const ordinary = draft => !draft.operation && !draft.restoredFrom
+      && (scene || !['revision', 'edit', 'infill', 'stream'].includes(draft.mode));
+    const previous = value.returnDrafts || [];
+    // Old stacks may contain several restored records; retain only the original creation.
+    let current = copy(previous.find(ordinary) || previous[0] || value);
+    if (!scene) current = migrateWritingDraft(retireContinuation(current));
+    delete current.returnDrafts; delete current.streamDraft;
+    if (scene) {
+      if (!ordinary(current)) Object.assign(current, fresh('scene'));
+      delete current.restoredMode; delete current.previous_take; delete current.previous_sources;
+    } else {
+      if (!ordinary(current)) current.context = fresh('single');
+      current.mode = 'tts';
+      current.form = { ...current.form, 'previous-take': '', 'source-take': '' };
+      if (current.design) { current.design.active = false; current.design.historyReturn = false; }
+    }
+    current.operation = current.restoredFrom = current.restoredModel = null;
+    return current;
+  }
   function stash(current = capture()) {
-    delete current.returnDrafts;
-    delete current.streamDraft;
     if (current.mode === 'stream') flow.streamDraft = copy(current);
-    flow.returnDrafts.push(current); flow.returnDrafts = flow.returnDrafts.slice(-4);
+    flow.returnDrafts = [creationDraft(current)];
+  }
+  async function returnToCreation() {
+    if (flow.switchingInput || flow.restoring) return;
+    const previous = flow.returnDrafts[0];
+    if (previous) { await restore({ ...previous, returnDrafts: [] }); saveSoon(); }
   }
   function renderOperation() {
     const box = $('creative-operation'), back = $('return-draft'); box.replaceChildren();
@@ -421,6 +447,7 @@
       ReferencePrep.cancel(role); (role.extraReferences || []).forEach(ReferencePrep.cancel);
     }
     flow.scene = copy(value);
+    flow.scene.returnDrafts = value.returnDrafts?.length ? [creationDraft(value, { scene: true })] : [];
     if (value.generation) {
       for (const [id, text] of Object.entries(value.generation.form)) if ($(`scene-${id}`)) UiNumber.restore($(`scene-${id}`), text);
       $('scene-random-seed').checked = value.generation.random;
@@ -429,8 +456,7 @@
     renderScene(); ScriptEditor.reset($('dialogue-script')); updateStrategy(); renderSceneOperation(); saveSoon();
   }
   async function deriveScene(version, source, action, reword = { bindings: [], previews: [] }) {
-    const current = sceneSnapshot(); delete current.returnDrafts;
-    const previous = [...(flow.scene.returnDrafts || []), current].slice(-4);
+    const previous = [creationDraft(sceneSnapshot(), { scene: true })];
     const recipe = version.recipe;
     const roles = recipe.characters.map((role, index) => ({
       ...sceneRole(role.name, role.speaker), ...role,
@@ -710,6 +736,7 @@
       if (!voiceDesignActive()) switchVoiceSource('design');
       flow.design = Object.keys(draftStudio).length ? draftStudio : fresh('design');
       flow.designRecipe = { source, model: recipe.model, character_name: recipe.character_name, scene: recipe.scene };
+      flow.designHistoryReturn = true;
       $('voice-description').value = recipe.voice_description || '';
       flow.writing.design = { text: version.text, direction: recipe.direction || '' };
       showWriting('design'); updateMode();
@@ -717,7 +744,7 @@
       view('generate'); renderOperation(); saveSoon(); return;
     }
     if (recipe.characters?.length && recipe.lines?.length && recipe.mode !== 'infill') {
-      const current = previousScene; delete current.returnDrafts;
+      const previous = [creationDraft(previousScene, { scene: true })];
       const roles = recipe.characters.map((role, index) => {
         const clips = references.filter(reference => reference.speaker === role.speaker);
         return { ...sceneRole(role.name, role.speaker), ...role, id: recipe.character_ids?.[index] || uid(),
@@ -731,7 +758,7 @@
         strategy: recipe.scene_strategy || 'per_line', scene: recipe.scene || '', direction: recipe.direction || '',
         restoredFrom: source, restoredModel: recipe.model, restoredMode: recipe.mode,
         previous_take: recipe.previous_take, previous_sources: recipe.previous_sources,
-        returnDrafts: [...(flow.scene.returnDrafts || []), current].slice(-4) });
+        returnDrafts: previous });
       state.resultJobs.scene = result;
       view('scene'); saveSoon(); return;
     }
@@ -898,12 +925,12 @@
     const top = node('div', 'creation-toolbar');
     top.append(node('span', 'field-help', ''));
     const buttons = node('div', 'creation-toolbar-actions');
-    const back = command('Return to draft', async () => {
-      if (flow.switchingInput) return;
-      const previous = flow.returnDrafts.pop(); const rest = copy(flow.returnDrafts);
-      if (previous) { await restore({ ...previous, returnDrafts: rest }); saveSoon(); }
-    }, 'text-btn'); back.id = 'return-draft'; back.hidden = true;
-    const designBack = command('Back', () => switchVoiceSource('reference'));
+    const back = command('Return to creation', () => guarded(returnToCreation), 'text-btn');
+    back.id = 'return-draft'; back.hidden = true;
+    const designBack = command('Back', () => guarded(async () => {
+      if (flow.designHistoryReturn && flow.returnDrafts.length) await returnToCreation();
+      else switchVoiceSource('reference');
+    }));
     designBack.id = 'back-to-generation'; designBack.hidden = true; delete designBack.dataset.i18n;
     designBack.innerHTML = icon('arrow'); designBack.append(localized('span', '', 'Back'));
     buttons.append(designBack);
@@ -1612,10 +1639,10 @@
       random.checked = flow.scene.generation.random !== false;
       $('scene-silence-retry').checked = flow.scene.generation.silenceRetry !== false;
     }
-    const back = command('Return to draft', () => guarded(async () => {
-      const previous = flow.scene.returnDrafts?.pop(), rest = copy(flow.scene.returnDrafts || []);
+    const back = command('Return to dialogue', () => guarded(async () => {
+      const previous = flow.scene.returnDrafts?.[0];
       if (previous) {
-        restoreScene({ ...previous, returnDrafts: rest });
+        restoreScene({ ...previous, returnDrafts: [] });
         await restoreWorkspaceResults(state.resultJobs.generate?.id || null, previous.active_job_id, {
           generate: state.resultJobs.generate?.restoredSource, scene: previous.active_result_source,
         });
@@ -1960,6 +1987,7 @@
         } catch (issue) { savedScene.restoreError = message(issue.message); }
       }
       flow.scene = savedScene;
+      flow.scene.returnDrafts = savedScene.returnDrafts?.length ? [creationDraft(savedScene, { scene: true })] : [];
       if (savedScene.restoreError) fail(new Error(savedScene.restoreError));
     }
     if (!flow.scene.roles.length) {

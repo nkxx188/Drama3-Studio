@@ -68,7 +68,7 @@ const report = { scope: 'Voice-design workspace: one physical editor and submit,
     const activeDesign = () => page.evaluate(() => StudioFlow.voiceDesignActive());
     const setDesign = async value => {
       if (await activeDesign() !== value) await page.locator(value ? '#describe-voice' : '#back-to-generation').click();
-      await page.waitForFunction(value => StudioFlow.voiceDesignActive() === value, value);
+      await page.waitForFunction(value => StudioFlow.voiceDesignActive() === value && !StudioFlow.flow.restoring, value);
       await settle();
     };
     const choose = async (id, value) => {
@@ -307,6 +307,8 @@ const report = { scope: 'Voice-design workspace: one physical editor and submit,
       const response = await fetch('/api/jobs/' + id); return (await response.json()).status === 'complete';
     }, historical.id);
     const historicalRecord = await api('/api/jobs/' + historical.id);
+    await page.evaluate(() => StudioFlow.save());
+    const beforeHistory = (await api('/api/studio')).drafts.single.value;
     await restoreHistory(historical.id);
     check('history_design_restores_as_the_shared_design_composer', await activeDesign()
       && await page.inputValue('#text') === '历史声音设计的实际正文。'
@@ -316,13 +318,27 @@ const report = { scope: 'Voice-design workspace: one physical editor and submit,
       && Number(await page.inputValue('#top-p')) === .91 && Number(await page.inputValue('#top-k')) === 21
       && await noIndependentDesignControls());
     await setDesign(false);
+    await page.waitForFunction(id => state.resultJobs.generate?.id === id, beforeHistory.active_job_id);
     check('restoring_design_history_does_not_overwrite_normal_draft', await page.inputValue('#text') === '普通模式的参考转写还在进行。'
       && await page.inputValue('#direction') === '普通说话自然。');
-    check('back_keeps_restored_shared_sampling_instead_of_restoring_old_mode_settings', Number(await page.inputValue('#temperature')) === .83
-      && Number(await page.inputValue('#top-p')) === .91);
+    check('history_design_back_restores_previous_settings_reference_and_result',
+      Number(await page.inputValue('#temperature')) === Number(beforeHistory.form.temperature)
+      && Number(await page.inputValue('#top-p')) === Number(beforeHistory.form['top-p'])
+      && await page.evaluate(saved => state.cloneUpload?.id === saved.upload.id
+        && state.resultJobs.generate?.id === saved.active_job_id, beforeHistory)
+      && await page.inputValue('#clone-transcript') === beforeHistory.transcript);
+    check('history_design_back_leaves_no_second_return', !await page.locator('#return-draft').isVisible()
+      && !await page.locator('#back-to-generation').isVisible()
+      && await page.evaluate(() => !StudioFlow.flow.returnDrafts.length && !StudioFlow.flow.restoredFrom));
     await setDesign(true);
-    check('returning_to_restored_design_keeps_its_historical_words', await page.inputValue('#text') === '历史声音设计的实际正文。'
-      && await page.inputValue('#direction') === 'Steady and reassuring.');
+    check('returning_from_history_preserves_the_original_independent_design_draft',
+      await page.inputValue('#text') === beforeHistory.design.text
+      && await page.inputValue('#direction') === beforeHistory.design.direction
+      && await page.inputValue('#voice-description') === beforeHistory.design.description);
+    await setDesign(false);
+    check('ordinary_design_round_trip_after_history_needs_no_extra_return', !await page.locator('#return-draft').isVisible()
+      && await page.inputValue('#text') === beforeHistory.form.text);
+    await restoreHistory(historical.id);
     const restoredDesign = await generate(), restoredRequest = submissions.at(-1);
     check('restored_design_keeps_source_model_and_character_metadata', restoredRequest.model === historicalRecord.recipe.model
       && restoredRequest.character_name === 'Narrator' && restoredRequest.scene === 'Quiet room.'
@@ -338,6 +354,11 @@ const report = { scope: 'Voice-design workspace: one physical editor and submit,
       && await page.inputValue('#direction') === 'Steady and reassuring.');
     check('design_reentry_keeps_shared_settings_from_ordinary_history', Number(await page.inputValue('#temperature')) === ordinary.recipe.temperature
       && Number(await page.inputValue('#top-p')) === ordinary.recipe.top_p);
+    await setDesign(false);
+    check('cached_historical_design_does_not_change_an_ordinary_design_switch_into_history_exit',
+      await page.inputValue('#text') === ordinary.recipe.text && await page.locator('#return-draft').isVisible()
+      && await page.evaluate(() => !StudioFlow.flow.designHistoryReturn && StudioFlow.flow.returnDrafts.length === 1));
+    await setDesign(true);
     await navigate('voices'); await page.locator(`#voice-list .use-voice[data-id="${voices[1].id}"]`).click();
     await page.locator('#view-generate.active').waitFor();
     check('use_library_voice_explicitly_returns_to_regular_generation', !await activeDesign()

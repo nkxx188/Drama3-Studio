@@ -7,6 +7,7 @@ const report = { checks: {}, errors: [], screenshots: [] };
   try {
     browser = await chromium.launch({ channel: 'chrome', headless: true });
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' });
+    await context.addInitScript(() => localStorage.setItem('drama3.ui.language', 'zh-CN'));
     page = await context.newPage();
     page.on('pageerror', error => report.errors.push(error.stack || error.message));
     const api = async (url, data) => {
@@ -62,6 +63,30 @@ const report = { checks: {}, errors: [], screenshots: [] };
       studio: { work_id: 'restore-dialogue', segment_id: 'scene', layout: 'scene' } });
     await show(joint); await show(previous);
     await editor().fill('An unsent working draft.'); await page.locator('#direction').fill('Quietly.');
+    await page.locator('#clone-audio').setInputFiles(process.env.DRAMA_STUDIO_REFERENCE);
+    await page.waitForFunction(() => state.cloneUpload && !state.cloneAsrPromise);
+    await page.locator('#clone-transcript').fill('Original working reference transcript.');
+    await page.locator('#advanced-settings > summary').click();
+    await page.locator('#temperature').fill('.64'); await page.locator('#top-p').fill('.87');
+    await page.locator('#max-chars').fill('240'); await page.locator('#candidate-count').fill('2');
+    await page.locator('#random-seed').uncheck(); await page.locator('#seed').fill('424242');
+    await page.locator('#silence-retry').uncheck();
+    await page.evaluate(() => StudioFlow.save());
+    const originalDraft = (await api('/api/studio')).drafts.single.value;
+    const checkOriginalCreation = async name => {
+      await page.waitForFunction(id => document.querySelector('#result-box').dataset.jobId === id, previous.id);
+      check(name, await page.inputValue('#text') === originalDraft.form.text
+        && await page.inputValue('#direction') === originalDraft.form.direction
+        && await page.inputValue('#clone-transcript') === originalDraft.transcript
+        && await page.evaluate(id => state.cloneUpload?.id === id, originalDraft.upload.id)
+        && Number(await page.inputValue('#temperature')) === .64 && Number(await page.inputValue('#top-p')) === .87
+        && Number(await page.inputValue('#max-chars')) === 240 && Number(await page.inputValue('#candidate-count')) === 2
+        && Number(await page.inputValue('#seed')) === 424242 && !await page.locator('#random-seed').isChecked()
+        && !await page.locator('#silence-retry').isChecked() && await audioMatches(previous.output)
+        && !await page.locator('#return-draft').isVisible()
+        && await page.evaluate(() => !StudioFlow.flow.operation && !StudioFlow.flow.restoredFrom
+          && !StudioFlow.flow.returnDrafts.length && !StudioFlow.voiceDesignActive()));
+    };
     await page.locator('.nav[data-view="takes"]').click();
     await page.evaluate(() => loadJobs());
     const row = page.locator(`.job-card[data-job-id="${edited.id}"]`);
@@ -88,9 +113,65 @@ const report = { checks: {}, errors: [], screenshots: [] };
     check('restored_page_fits_narrow_windows', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator('#return-draft').click();
-    await page.waitForFunction(id => document.querySelector('#result-box').dataset.jobId === id, previous.id);
-    check('return_to_draft_restores_its_own_text_and_result', await page.inputValue('#text') === 'An unsent working draft.'
-      && await page.inputValue('#direction') === 'Quietly.' && await audioMatches(previous.output));
+    await checkOriginalCreation('return_to_creation_restores_text_reference_settings_and_result');
+
+    const alternate = await create({ ...basic, text: 'Another history draft.', voice_ids: [voices[1].id],
+      studio: { work_id: 'restore-alternate', segment_id: 'main', layout: 'single' } });
+    await restore({ job_id: edited.id });
+    await editor().fill('Intermediate restored draft changes must not become the return destination.');
+    for (const job of [alternate, edited, alternate, edited, alternate]) await restore({ job_id: job.id });
+    check('repeated_history_restores_keep_one_original_creation', await page.evaluate(text => {
+      const drafts = StudioFlow.flow.returnDrafts;
+      return drafts.length === 1 && drafts[0].form.text === text && !drafts[0].returnDrafts;
+    }, originalDraft.form.text) && await page.locator('#return-draft').textContent() === '返回创作');
+    await reload();
+    check('replacement_history_draft_and_single_return_survive_reload', await page.inputValue('#text') === alternate.recipe.text
+      && await audioMatches(alternate.output) && await page.evaluate(() => StudioFlow.flow.returnDrafts.length === 1));
+    await page.locator('#return-draft').click();
+    await checkOriginalCreation('one_return_skips_all_intermediate_history_drafts_after_reload');
+    await reload();
+    await checkOriginalCreation('returned_creation_stays_out_of_restored_state_after_reload');
+
+    await restore({ job_id: edited.id });
+    await page.evaluate(() => StudioFlow.save());
+    const firstRestored = (await api('/api/studio')).drafts.single.value;
+    await restore({ job_id: alternate.id });
+    await page.evaluate(() => StudioFlow.save());
+    const legacyStack = (await api('/api/studio')).drafts.single.value;
+    legacyStack.returnDrafts = [originalDraft, { ...firstRestored, returnDrafts: [] },
+      { ...structuredClone(legacyStack), returnDrafts: [] }];
+    await api('/api/studio/draft', { key: 'single', value: legacyStack });
+    await page.reload({ waitUntil: 'networkidle' }); await ready();
+    check('legacy_history_stack_is_flattened_to_original_creation', await page.evaluate(text => {
+      const drafts = StudioFlow.flow.returnDrafts;
+      return drafts.length === 1 && drafts[0].form.text === text && !drafts[0].restoredFrom && !drafts[0].returnDrafts;
+    }, originalDraft.form.text));
+    await page.locator('#return-draft').click();
+    await checkOriginalCreation('legacy_stack_also_returns_in_one_click');
+
+    const truncatedStack = structuredClone(legacyStack);
+    truncatedStack.returnDrafts = [{ ...firstRestored, returnDrafts: [] }];
+    await api('/api/studio/draft', { key: 'single', value: truncatedStack });
+    await page.reload({ waitUntil: 'networkidle' }); await ready();
+    await page.locator('#return-draft').click();
+    await page.waitForFunction(id => document.querySelector('#result-box').dataset.jobId === id
+      && !StudioFlow.flow.restoring, edited.id);
+    check('truncated_legacy_stack_returns_to_editable_creation_without_source_lock', await page.inputValue('#text') === script
+      && await page.inputValue('#mode') === 'tts' && !await page.locator('#return-draft').isVisible()
+      && await page.evaluate(() => !StudioFlow.flow.restoredFrom && !StudioFlow.flow.operation
+        && !document.querySelector('#text').readOnly));
+    await api('/api/studio/draft', { key: 'single', value: originalDraft });
+    await page.reload({ waitUntil: 'networkidle' }); await ready();
+    await checkOriginalCreation('original_creation_fixture_is_restored_after_legacy_fallback_check');
+
+    await editor().fill('A new working draft after returning.');
+    await restore({ job_id: edited.id }); await restore({ job_id: alternate.id });
+    await page.locator('#return-draft').click();
+    await page.waitForFunction(id => !StudioFlow.flow.restoring && !StudioFlow.flow.returnDrafts.length
+      && document.querySelector('#result-box').dataset.jobId === id, previous.id);
+    check('next_restore_session_remembers_new_creation_not_an_old_snapshot',
+      await page.inputValue('#text') === 'A new working draft after returning.' && await audioMatches(previous.output));
+    await editor().fill(originalDraft.form.text);
     await restore({ job_id: edited.id });
     await page.locator('#submit-job').click();
     await page.waitForFunction(id => document.querySelector('#result-box').dataset.jobId !== id
@@ -141,6 +222,9 @@ const report = { checks: {}, errors: [], screenshots: [] };
       retried.recipe.source_version.part_index === 1 && retried.recipe.text.includes('准备好了。'));
 
     await show(previous); await show(joint);
+    await page.locator('.dialogue-composer .cm-content').fill('S1：Original unsent dialogue.\nS2：Keep this working scene.');
+    await page.evaluate(() => StudioFlow.save());
+    const originalScene = (await api('/api/studio')).drafts.scene.value;
     const otherJoint = await create({ ...joint.recipe, reference_snapshot: undefined, source_version: undefined,
       voice_bindings: [{ voice_id: voices[0].id, speaker: 0 }, { voice_id: voices[1].id, speaker: 1 }],
       studio: { work_id: 'restore-edited-dialogue', segment_id: 'scene', layout: 'scene',
@@ -152,9 +236,37 @@ const report = { checks: {}, errors: [], screenshots: [] };
     check('restoring_dialogue_does_not_replace_single_result', await page.evaluate(id => state.resultJobs.generate?.id === id, previous.id));
     await reload();
     check('restored_joint_edit_result_survives_reload', await visibleId() === otherJoint.id && await audioMatches(otherJoint.output));
+    await restore({ job_id: joint.id }); await restore({ job_id: otherJoint.id });
+    check('repeated_dialogue_restores_keep_one_original_creation', await page.evaluate(script => {
+      const drafts = StudioFlow.flow.scene.returnDrafts;
+      return drafts.length === 1 && drafts[0].script === script && !drafts[0].returnDrafts;
+    }, originalScene.script) && await page.locator('#return-scene-draft').textContent() === '返回对话');
+    await page.evaluate(() => StudioFlow.save());
+    const legacyScene = (await api('/api/studio')).drafts.scene.value;
+    legacyScene.returnDrafts = [originalScene, { ...structuredClone(legacyScene), returnDrafts: [] }];
+    await api('/api/studio/draft', { key: 'scene', value: legacyScene });
+    await page.reload({ waitUntil: 'networkidle' }); await ready();
+    check('legacy_dialogue_stack_is_flattened_without_switching_workspaces', await page.locator('#view-scene').isVisible()
+      && await page.evaluate(script => {
+        const drafts = StudioFlow.flow.scene.returnDrafts;
+        return drafts.length === 1 && drafts[0].script === script && !drafts[0].restoredFrom && !drafts[0].returnDrafts;
+      }, originalScene.script));
+    await reload();
     await page.locator('#return-scene-draft').click();
     await page.waitForFunction(id => document.querySelector('#result-box').dataset.jobId === id, joint.id);
-    check('returning_to_dialogue_draft_restores_its_previous_result', await audioMatches(joint.output));
+    check('returning_to_dialogue_creation_restores_text_and_result_without_another_back', await page.locator('#view-scene').isVisible()
+      && !await page.locator('#view-generate').isVisible() && await audioMatches(joint.output)
+      && await page.inputValue('#dialogue-script') === originalScene.script
+      && !await page.locator('#return-scene-draft').isVisible()
+      && await page.evaluate(() => !StudioFlow.flow.scene.restoredFrom && !StudioFlow.flow.scene.operation
+        && !StudioFlow.flow.scene.returnDrafts.length));
+    await page.evaluate(() => StudioFlow.save());
+    const returnedScene = (await api('/api/studio')).drafts.scene.value;
+    check('dialogue_return_preserves_original_speakers_and_generation_settings',
+      JSON.stringify(returnedScene.roles) === JSON.stringify(originalScene.roles)
+      && JSON.stringify(returnedScene.generation) === JSON.stringify(originalScene.generation)
+      && returnedScene.strategy === originalScene.strategy);
+    await shot('returned-normal-dialogue-desktop');
 
     const designed = await create({ mode: 'design', text: 'A voice design audition.',
       voice_description: 'Warm clear adult voice.', character_name: 'Voice', scene: '',
@@ -164,6 +276,30 @@ const report = { checks: {}, errors: [], screenshots: [] };
       && await audioMatches(designed.output) && await page.inputValue('#text') === designed.recipe.text);
     await reload();
     check('voice_design_result_survives_reload', await visibleId() === designed.id && await audioMatches(designed.output));
+    await page.locator('#back-to-generation').click();
+    await page.waitForFunction(id => !StudioFlow.voiceDesignActive() && !StudioFlow.flow.restoring
+      && state.resultJobs.generate?.id === id, previous.id);
+    check('design_history_back_exits_history_without_a_second_return_button',
+      !await page.locator('#return-draft').isVisible() && !await page.locator('#back-to-generation').isVisible()
+      && await page.evaluate(() => !StudioFlow.flow.returnDrafts.length && !StudioFlow.flow.restoredFrom));
+    await checkOriginalCreation('design_history_back_restores_original_creation_in_one_click');
+    await reload();
+    await checkOriginalCreation('design_history_back_does_not_restore_a_second_return_after_reload');
+    await restore({ job_id: designed.id });
+    await page.evaluate(() => StudioFlow.save());
+    const olderDesignDraft = (await api('/api/studio')).drafts.single.value;
+    delete olderDesignDraft.design.historyReturn;
+    await api('/api/studio/draft', { key: 'single', value: olderDesignDraft });
+    await page.reload({ waitUntil: 'networkidle' }); await ready();
+    await page.locator('#back-to-generation').click();
+    await checkOriginalCreation('previously_saved_design_history_also_returns_in_one_click');
+    await restore({ job_id: alternate.id }); await restore({ job_id: designed.id });
+    await restore({ job_id: designed.id });
+    await page.locator('#back-to-generation').click();
+    await checkOriginalCreation('design_back_after_repeated_and_mixed_history_restores_returns_once');
+    await restore({ job_id: alternate.id }); await restore({ job_id: designed.id }); await restore({ job_id: edited.id });
+    await page.locator('#return-draft').click();
+    await checkOriginalCreation('mixed_design_and_normal_history_still_return_to_original_normal_creation');
     const missingAudio = async route => {
       const response = await route.fetch(), value = await response.json();
       const version = value.version || value;

@@ -479,6 +479,24 @@ def test_history_draft_restores_its_result_without_reclassifying_stored_editor_j
     assert "return /<\\|speaker:\\d+\\|>/.test(unmarked) ? text : unmarked" in studio
 
 
+def test_restored_drafts_keep_one_creation_return_instead_of_a_back_stack():
+    studio = (ROOT / "ui/studio.js").read_text(encoding="utf-8")
+    i18n = (ROOT / "ui/i18n.js").read_text(encoding="utf-8")
+    assert "function creationDraft(value, { scene = false } = {})" in studio
+    assert "flow.returnDrafts = [creationDraft(current)]" in studio
+    assert "value.returnDrafts?.length ? [creationDraft(value)] : []" in studio
+    assert "creationDraft(previousScene, { scene: true })" in studio
+    assert "savedScene.returnDrafts?.length ? [creationDraft(savedScene, { scene: true })] : []" in studio
+    assert "await restore({ ...previous, returnDrafts: [] })" in studio
+    assert "restoreScene({ ...previous, returnDrafts: [] })" in studio
+    assert studio.count("command('Return to creation'") == 1
+    assert studio.count("command('Return to dialogue'") == 1
+    assert "['Return to creation', '返回创作'," in i18n
+    assert "['Return to dialogue', '返回对话'," in i18n
+    for old_stack in ("returnDrafts.push(", "returnDrafts.pop(", "returnDrafts?.pop(", "slice(-4)"):
+        assert old_stack not in studio
+
+
 def test_history_play_starts_audio_directly_without_a_player_popover():
     assert 'class="text-btn history-play"' in JS
     assert "previewVoice({ audio_url: fileUrl(job.output) }, play)" in JS
