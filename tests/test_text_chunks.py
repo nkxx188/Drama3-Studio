@@ -1,10 +1,12 @@
 """Speech requests must keep every word, direction and active speaker."""
 
+import json
+from pathlib import Path
 import re
 
 import pytest
 
-from drama_low_vram.text_chunks import split_text
+from drama_low_vram.text_chunks import _content_width, split_text
 
 
 def recover(chunks: list[str], original: str) -> str:
@@ -133,7 +135,7 @@ def test_explicit_leading_speaker_does_not_get_an_extra_prefix():
 
 @pytest.mark.parametrize("text", [" \n", "[calm]", "[unfinished direction", "<unfinished tag"])
 def test_unusual_input_is_preserved_for_official_validation(text):
-    assert "".join(split_text(text, 4)) == text
+    assert recover(split_text(text, 4), text) == text
 
 
 @pytest.mark.parametrize("max_chars", [0, -1, 2.5, True])
@@ -162,13 +164,12 @@ def test_sentence_boundary_can_extend_past_the_soft_target():
 
 def test_paired_scope_and_semicolon_are_natural_boundaries():
     text = "<whisper>Keep this marked range together.</whisper> A; B; C."
-    chunks = split_text(text, 18)
+    chunks = split_text(text, 24)
     assert any("<whisper>Keep this marked range together.</whisper>" in chunk for chunk in chunks)
     assert recover(chunks, text) == text
 
 
 def test_paired_scope_counts_spoken_text_toward_chunk_target():
-    from drama_low_vram.text_chunks import _content_width
     assert _content_width("[calm]<soft>甲" + "<emphasis>乙</emphasis>丙</soft>") == 3
     text = "<soft>" + "甲" * 100 + "</soft>" + "乙" * 100
     chunks = split_text(text, 80)
@@ -207,3 +208,82 @@ def test_speaker_at_chunk_limit_starts_the_following_request():
     chunks = split_text(text, 5)
     assert chunks == ["<|speaker:3|>hello", "<|speaker:8|>world"]
     assert recover(chunks, text) == text
+
+
+@pytest.mark.parametrize("case", json.loads(
+    (Path(__file__).parent / "fixtures/text_content_counts.json").read_text(encoding="utf-8")))
+def test_content_count_matches_editor_contract(case):
+    assert _content_width(case["text"]) == case["count"]
+
+
+def scope_body(text):
+    return re.sub(r"<[^<>]*>|\[[^\]]*\]", "", text)
+
+
+def assert_balanced_scopes(chunks):
+    for chunk in chunks:
+        stack = []
+        for closing, name in re.findall(r"<(\/?)(whisper|emphasis|soft|fast|slow|stress|forceful)>", chunk):
+            if closing:
+                assert stack and stack.pop() == name, chunk
+            else:
+                stack.append(name)
+        assert not stack, chunk
+
+
+@pytest.mark.parametrize("width", [160, 170, 240])
+def test_scope_within_soft_budget_keeps_its_cue_and_never_becomes_a_tag_only_chunk(width):
+    text = "[轻声]<soft>" + "甲" * width + "</soft>"
+    assert split_text(text, 160) == [text]
+
+
+def test_nested_same_name_scopes_are_protected_through_the_outer_closing_tag():
+    marked = "<soft>" + "甲" * 30 + "<soft>" + "乙" * 50 + "</soft>" + "丙" * 90 + "</soft>"
+    text = "[轻声]" + marked + "丁" * 160
+    chunks = split_text(text, 160)
+    assert any(marked in chunk for chunk in chunks)
+    assert recover(chunks, text) == text
+    assert_balanced_scopes(chunks)
+
+
+@pytest.mark.parametrize("text", [
+    "[轻声]<soft>" + "甲" * 241 + "</soft>",
+    "[轻声]<soft>" + "甲" * 2000 + "</soft>",
+    "<soft>" + ("甲" * 88 + "。\n") * 10 + "</soft>",
+    "<soft>" + "甲" * 300 + "<emphasis>" + "乙" * 180 + "</emphasis>" + "丙" * 400 + "</soft>",
+    "<soft>" + "甲" * 300 + "<soft>" + "乙" * 300 + "</soft>" + "丙" * 300 + "</soft>",
+])
+def test_oversized_scopes_split_into_bounded_balanced_chunks_without_losing_text(text):
+    chunks = split_text(text, 160)
+    assert len(chunks) > 1
+    assert all(0 < _content_width(chunk) <= 240 for chunk in chunks)
+    assert scope_body("".join(chunks)) == scope_body(text)
+    assert_balanced_scopes(chunks)
+    assert all("<soft>" in chunk and "</soft>" in chunk for chunk in chunks)
+    if "<emphasis>" in text:
+        assert sum("<emphasis>" in chunk for chunk in chunks) == 1
+
+
+def test_oversized_scope_prefers_a_complete_sentence():
+    sentence = "甲" * 169 + "。"
+    chunks = split_text("[平静]<soft>" + sentence * 3 + "</soft>", 160)
+    assert len(chunks) == 3
+    assert [scope_body(chunk) for chunk in chunks] == [sentence] * 3
+
+
+def test_oversized_scope_respects_speaker_boundaries_and_limits():
+    text = "<soft>" + "".join(
+        f"<|speaker:{speaker}|>" + "甲" * 90 for speaker in range(4)
+    ) + "</soft>"
+    chunks = split_text(text, 160)
+    assert len(chunks) > 1
+    assert all(0 < _content_width(chunk) <= 240 for chunk in chunks)
+    assert all(len(set(re.findall(r"<\|speaker:(\d+)\|>", chunk))) <= 3 for chunk in chunks)
+    assert scope_body("".join(chunks)) == scope_body(text)
+    assert_balanced_scopes(chunks)
+
+
+def test_pinyin_does_not_make_short_speech_split_early():
+    text = "[开心]<soft>" + "<|phoneme_start|>chong2<|phoneme_end|>" * 80 + "</soft>"
+    assert _content_width(text) == 80
+    assert split_text(text, 80) == [text]

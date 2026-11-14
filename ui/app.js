@@ -1704,7 +1704,7 @@ function updateMode() {
 $('mode').onchange = updateMode;
 function updateEditorMeta() {
   window.ScriptEditor?.sync($('text'));
-  $('text-count').textContent = t('{count} chars', { count: Array.from($('text').value).length });
+  $('text-count').textContent = t('{count} chars', { count: ScriptEditor.contentWidth($('text').value) });
 }
 $('text').addEventListener('input', updateEditorMeta);
 $('clear-text').onclick = () => {

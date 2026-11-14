@@ -37,6 +37,17 @@ const report = { scope: 'Actual writing layout and compact voice library, reusab
     const openDialog = async () => {
       await page.locator('#add-voice').click(); await dialog().waitFor({ state: 'visible' }); await settle();
     };
+    const uploadNamed = async filename => {
+      const previous = await page.evaluate(() => StudioFlow.flow.voiceDraft.main.upload?.id);
+      await page.locator('#library-new-upload').setInputFiles({
+        name: filename, mimeType: 'audio/wav', buffer: fs.readFileSync(process.env.DRAMA_STUDIO_REFERENCE),
+      });
+      await page.waitForFunction(previous => {
+        const upload = StudioFlow.flow.voiceDraft.main.upload;
+        return upload?.id && upload.id !== previous && !document.querySelector('#library-new-upload').disabled
+          && document.querySelector('#library-new-transcript').getAttribute('aria-busy') === 'false';
+      }, previous);
+    };
     const note = () => page.locator('#voice-form-note');
     const shot = async name => {
       const file = path.join(folder, name + '.png'); await page.screenshot({ path: file }); report.screenshots.push(file);
@@ -159,6 +170,7 @@ const report = { scope: 'Actual writing layout and compact voice library, reusab
     await page.locator('#library-new-upload').setInputFiles(process.env.DRAMA_STUDIO_REFERENCE);
     await page.waitForFunction(() => Boolean(StudioFlow.flow.voiceDraft.main.upload?.id));
     await page.locator('#library-new-transcript').waitFor({ state: 'visible' });
+    check('upload_keeps_a_name_entered_before_selecting_audio', await page.inputValue('#voice-name') === '保留的音色草稿');
     check('reference_preparation_keeps_waveform_only_inside_modal', await page.locator('#voice-library-clips .studio-player').count() === 1
       && !await page.locator('#voice-list .studio-player').count() && asrCalls === 1);
     await page.locator('#save-voice').click();
@@ -197,6 +209,44 @@ const report = { scope: 'Actual writing layout and compact voice library, reusab
       && await page.inputValue('#text') === '保持这份尚未提交的创作草稿。'
       && await page.evaluate(() => !StudioFlow.flow.voiceDraft.main.upload
         && !StudioFlow.flow.voiceDraft.extraReferences));
+    await openDialog();
+    await uploadNamed('旁白.自然版.V2.WAV');
+    check('audio_filename_becomes_an_editable_voice_name_without_its_extension',
+      await page.inputValue('#voice-name') === '旁白.自然版.V2' && await page.locator('#voice-name').isEditable());
+    await shot('add-voice-auto-filename-desktop');
+    await page.waitForFunction(() => document.getElementById('library-new-audio').duration > 2);
+    await page.evaluate(() => StudioAudio.setSelection(document.getElementById('library-new-audio'), .5, 1.5, { emit: true }));
+    await dialog().getByRole('button', { name: await page.evaluate(() => t('Use selected audio')), exact: true }).click();
+    await page.waitForFunction(() => StudioFlow.flow.voiceDraft.main.original
+      && !document.querySelector('#library-new-upload').disabled
+      && document.querySelector('#library-new-transcript').getAttribute('aria-busy') === 'false');
+    check('cropping_audio_does_not_replace_the_name_with_a_generated_crop_filename',
+      await page.inputValue('#voice-name') === '旁白.自然版.V2');
+    await uploadNamed('replacement.auto.wav');
+    check('untouched_default_name_follows_replacement_audio', await page.inputValue('#voice-name') === 'replacement.auto');
+    await page.evaluate(() => StudioFlow.save());
+    await page.locator('#close-voice-library').click();
+    await page.reload({ waitUntil: 'networkidle' }); await ready(); await navigate('voices'); await openDialog();
+    check('automatic_name_is_kept_in_the_saved_draft', await page.inputValue('#voice-name') === 'replacement.auto');
+    await uploadNamed('next-default.wav');
+    check('automatic_name_still_follows_replacement_after_reload', await page.inputValue('#voice-name') === 'next-default');
+    await page.locator('#voice-name').fill('自定义的温柔旁白');
+    await uploadNamed('another-file.wav');
+    check('manual_name_is_not_overwritten_when_audio_changes', await page.inputValue('#voice-name') === '自定义的温柔旁白');
+    await page.evaluate(() => StudioFlow.save());
+    await page.locator('#close-voice-library').click();
+    await page.reload({ waitUntil: 'networkidle' }); await ready(); await navigate('voices'); await openDialog();
+    await uploadNamed('after-reload.wav');
+    check('manual_name_remains_protected_after_reload', await page.inputValue('#voice-name') === '自定义的温柔旁白');
+    await page.locator('#voice-name').fill('');
+    await page.locator('#library-new-transcript').fill('手动清空名称时不要因为转写编辑就重新填回。');
+    check('editing_the_transcript_does_not_refill_a_manually_cleared_name', await page.inputValue('#voice-name') === '');
+    await uploadNamed('新的自动名称.wav');
+    check('new_audio_can_supply_a_default_after_the_name_was_cleared', await page.inputValue('#voice-name') === '新的自动名称');
+    await page.locator('#library-new-transcript').fill('这条音色直接使用音频文件名保存。');
+    await page.locator('#save-voice').click(); await dialog().waitFor({ state: 'hidden' });
+    check('voice_can_be_saved_directly_with_the_filename_default',
+      (await api('/api/voices')).voices.some(voice => voice.name === '新的自动名称'));
     const multiVoice = await api('/api/voices/from-references', { name: 'Compact multi-reference voice',
       references: [
         { voice_id: savedVoice.id, reference_index: 0, speaker: 0, text: '这是我人工核对的主参考台词。' },

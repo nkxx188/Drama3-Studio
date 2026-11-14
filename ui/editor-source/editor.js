@@ -5,6 +5,7 @@ import { createElement, Tag, Undo2, Redo2, Code2, X, Search, Languages,
   ArrowLeftRight, Plus, Play, Pause, Trash2 } from 'lucide';
 import { tagCategories, tagSections } from './tag-catalog.js';
 import { parseDialogue, formatDialogue, reconcileDialogue, maxSpeakers } from './dialogue.js';
+import { contentWidth } from './text-content.js';
 
 const editors = new WeakMap(), mounted = new Set();
 const t = (source, args) => window.I18n.t(source, args);
@@ -570,7 +571,7 @@ function mount(textarea) {
 }
 
 window.ScriptEditor = Object.freeze({
-  mount, get: textarea => editors.get(textarea),
+  mount, contentWidth, get: textarea => editors.get(textarea),
   sync: textarea => editors.get(textarea)?.sync(),
   reset: textarea => editors.get(textarea)?.reset(),
   append: (textarea, text) => editors.get(textarea)?.append(text),

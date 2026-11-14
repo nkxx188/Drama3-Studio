@@ -322,6 +322,20 @@ def test_voice_library_has_reusable_add_dialog_and_compact_preview_tiles():
     assert "await ReferencePrep.readAll(original.main, 0)" in add_dialog
 
 
+def test_voice_library_defaults_to_filename_and_keeps_manual_names_editable():
+    studio = (ROOT / "ui/studio.js").read_text(encoding="utf-8")
+    add_dialog = studio[studio.index("function configureVoiceLibrary()"):
+                        studio.index("function renderExtraReferences()")]
+    assert "reference.original?.upload || reference.upload" in add_dialog
+    assert "filename.replace(/\\.[^.]+$/, '')" in add_dialog
+    assert "name.value === flow.voiceDraft.autoName" in add_dialog
+    assert "flow.voiceDraft.autoName = null" in add_dialog
+    assert "changed: () => { updateVoiceName(); saveSoon(); }" in add_dialog
+    assert "autoName: flow.voiceDraft.autoName" in studio
+    assert "autoName: savedVoice.autoName || null" in studio
+    assert "name.readOnly" not in add_dialog
+
+
 def test_voice_design_reuses_the_physical_script_direction_and_submit_controls():
     studio = (ROOT / "ui/studio.js").read_text(encoding="utf-8")
     for identifier in ("design-audition", "design-direction", "generate-designed-voice"):
@@ -619,3 +633,15 @@ def test_startup_uses_the_final_theme_and_a_single_hydration_commit():
 def test_navigation_clicks_cannot_bind_to_the_document_page_marker():
     assert "document.querySelectorAll('.nav, button[data-view=\"voices\"]')" in JS
     assert "document.querySelectorAll('.nav,[data-view=\"voices\"]')" not in JS
+
+
+def test_character_meter_uses_the_shared_spoken_text_counter():
+    editor = (ROOT / "ui/editor-source/editor.js").read_text(encoding="utf-8")
+    counter = (ROOT / "ui/editor-source/text-content.js").read_text(encoding="utf-8")
+    bundle = (ROOT / "ui/script-editor.js").read_text(encoding="utf-8")
+    fixture = (ROOT / "tests/fixtures/text_content_counts.json").read_text(encoding="utf-8")
+    assert "ScriptEditor.contentWidth($('text').value)" in JS
+    assert "export function contentWidth" in counter
+    assert "contentWidth" in editor and "contentWidth" in bundle
+    assert "text_length\": _content_width" in (ROOT / "ui/server.py").read_text(encoding="utf-8")
+    assert "<|phoneme_start|>chong2<|phoneme_end|>" in fixture

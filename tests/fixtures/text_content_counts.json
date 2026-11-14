@@ -1,0 +1,20 @@
+[
+  {"text": "\u4f60\u597d\u5440", "count": 3},
+  {"text": "[\u5f00\u5fc3]<soft>\u4f60\u597d\u5440</soft>", "count": 3},
+  {"text": "<soft>\u7532<emphasis>\u4e59</emphasis>\u4e19</soft>", "count": 3},
+  {"text": "<soft>\u7532<soft>\u4e59</soft>\u4e19</soft>", "count": 3},
+  {"text": "[a cue [with nested details]]Hello.", "count": 6},
+  {"text": "<|speaker:12|>[calm]Hello.", "count": 6},
+  {"text": "<|speaker:12|> Hello.", "count": 6},
+  {"text": "<|phoneme_start|>chong2<|phoneme_end|><|phoneme_start|>qing4<|phoneme_end|>\u3002", "count": 3},
+  {"text": "<soft><|phoneme_start|>chong2 qing4<|phoneme_end|></soft>", "count": 2},
+  {"text": "<|phoneme_start|>n\u00fc3<|phoneme_end|>", "count": 1},
+  {"text": "<|phoneme_start|>h\u0259lo\u028a<|phoneme_end|>", "count": 5},
+  {"text": "[\u6b23\u559c]\ud83d\ude00\ud840\udc00\u3002", "count": 3},
+  {"text": "<soft>First.\nSecond.</soft>", "count": 14},
+  {"text": "[unfinished direction", "count": 21},
+  {"text": "<unfinished tag", "count": 15},
+  {"text": "[unfinished <soft>\u53f0\u8bcd</soft>", "count": 14},
+  {"text": "<soft>\u53f0\u8bcd", "count": 2},
+  {"text": "[calm]<soft></soft>", "count": 0}
+]

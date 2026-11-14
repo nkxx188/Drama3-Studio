@@ -225,6 +225,11 @@ class AppState:
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
                 if isinstance(value, dict) and value.get("id"):
+                    recipe = value.get("recipe")
+                    if isinstance(recipe, dict) and isinstance(recipe.get("text"), str):
+                        summary = value.get("payload_summary") or {}
+                        summary["text_length"] = _content_width(recipe["text"])
+                        value["payload_summary"] = summary
                     was_active = value.get("status") in ("queued", "running")
                     value["status"] = (
                         "interrupted" if was_active
@@ -814,7 +819,7 @@ class AppState:
             "studio": clone(context) if context else None,
             "payload_summary": {
                 "mode": mode,
-                "text_length": len(str(payload.get("text", ""))),
+                "text_length": _content_width(str(payload.get("text", ""))),
                 "reference_count": len(references),
             },
         }
@@ -1820,7 +1825,7 @@ class AppState:
                 "id": job_id, "mode": recipe["mode"], "status": "queued",
                 "created_at": time.time(), "updated_at": time.time(), "events": [],
                 "output": None, "take_file": None, "error": None, "recipe": recipe, "studio": studio,
-                "payload_summary": {"mode": recipe["mode"], "text_length": len(text),
+                "payload_summary": {"mode": recipe["mode"], "text_length": _content_width(text),
                                     "reference_count": len(recipe["reference_snapshot"])},
             }
             with self._jobs_lock:

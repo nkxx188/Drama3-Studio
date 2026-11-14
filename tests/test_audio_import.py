@@ -64,6 +64,16 @@ def test_uploaded_edit_automatically_budgets_length_and_preserves_retry_switch(i
             state.start_uploaded_audio_edit(request(upload, silence_retry=bad))
 
 
+def test_uploaded_edit_counts_only_spoken_text_in_history(importer):
+    state, _tasks = importer
+    upload = recording(state)
+    text = "[平静]<soft>你好，<|phoneme_start|>chong2<|phoneme_end|>庆。</soft>"
+    created = state.start_uploaded_audio_edit(request(upload, text=text))
+    job = state.job(created["id"])
+    assert job["payload_summary"]["text_length"] == 6
+    assert job["recipe"]["text"] == "<|speaker:0|> " + text
+
+
 @pytest.mark.parametrize("backend,format", [("gguf", "WAV"), ("python", "FLAC")])
 @pytest.mark.parametrize("operation", ["revision", "reword", "infill"])
 def test_upload_is_prepared_only_with_edit_generation(importer, monkeypatch, backend, format, operation):

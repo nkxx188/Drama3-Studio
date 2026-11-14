@@ -46,7 +46,7 @@
     versionFocus: null, workJobs: {}, missingJobs: new Set(), historyLoads: new Map(),
     failedHistories: new Set(), restoredFrom: null, restoredModel: null, designRecipe: null, designHistoryReturn: false,
     contexts: new Map(), contextLoads: new Map(), streamDraft: null, switchingInput: false };
-  flow.voiceDraft = { main: ReferencePrep.fresh(), name: '' };
+  flow.voiceDraft = { main: ReferencePrep.fresh(), name: '', autoName: null };
   const formIds = ['text', 'direction', 'language', 'seed',
     'max-chars', 'temperature', 'top-p', 'top-k', 'candidate-count', 'chunks',
     'source-take', 'previous-take', 'start-time', 'end-time', 'start-frame', 'end-frame'];
@@ -130,7 +130,7 @@
       if (!syncCloneAudioSelection()) return;
       if (state.cloneFile) await uploadCloneAudio();
       const single = capture(), scene = sceneSnapshot(), voice = {
-        main: copy(flow.voiceDraft.main), name: $('voice-name').value,
+        main: copy(flow.voiceDraft.main), name: $('voice-name').value, autoName: flow.voiceDraft.autoName,
       };
       flow.saving = flow.saving.catch(() => {}).then(async () => {
         await post('/api/studio/draft', { key: 'single', value: single });
@@ -1240,6 +1240,22 @@
     body.append(nameLabel, name, preparation, legacy); form.replaceChildren(body, footer);
     form.noValidate = true;
     name.value = flow.voiceDraft.name || '';
+    let nameSource = '';
+    const updateVoiceName = () => {
+      const reference = flow.voiceDraft.main, upload = reference.original?.upload || reference.upload;
+      const source = upload ? `${upload.id}:${upload.filename || ''}` : '';
+      if (source === nameSource) return;
+      nameSource = source;
+      const filename = String(upload?.filename || '').replaceAll('\\', '/').split('/').at(-1);
+      const suggested = (filename.replace(/\.[^.]+$/, '') || filename).trim();
+      if (suggested && (!name.value.trim() || name.value === flow.voiceDraft.autoName)) {
+        name.value = suggested; flow.voiceDraft.autoName = suggested;
+      }
+      flow.voiceDraft.name = name.value;
+    };
+    name.addEventListener('input', () => {
+      flow.voiceDraft.name = name.value; flow.voiceDraft.autoName = null;
+    });
     const clearNote = () => {
       note.textContent = ''; delete note.dataset.i18n; delete note.dataset.error;
       note.setAttribute('role', 'status');
@@ -1267,9 +1283,10 @@
       if (current?.boundReference !== flow.voiceDraft.main) {
         current?.remove();
         clips.append(ReferencePrep.mount(flow.voiceDraft.main, {
-          prefix: 'library-new', changed: saveSoon, allowLibrary: false,
+          prefix: 'library-new', changed: () => { updateVoiceName(); saveSoon(); }, allowLibrary: false,
         }));
       }
+      updateVoiceName();
       enhanceAllSelects(); StudioAudio.enhance(preparation);
     }
     form.onsubmit = async event => {
@@ -1283,7 +1300,7 @@
         if (!references.length) throw new Error(t('Choose an audio file.'));
         await post('/api/voices/from-references', { name: name.value, references });
         ReferencePrep.cancel(original.main);
-        flow.voiceDraft = { main: ReferencePrep.fresh(), name: '' };
+        flow.voiceDraft = { main: ReferencePrep.fresh(), name: '', autoName: null };
         name.value = ''; renderVoiceDraft();
         await loadVoices(); saveSoon(); dialog.close();
       } catch (error) {
@@ -1963,7 +1980,9 @@
       submit: send,
     }, flow.data.drafts.audio_editor?.value);
     const savedVoice = flow.data.drafts.voice?.value;
-    if (savedVoice?.main) flow.voiceDraft = { main: savedVoice.main, name: savedVoice.name || '' };
+    if (savedVoice?.main) flow.voiceDraft = {
+      main: savedVoice.main, name: savedVoice.name || '', autoName: savedVoice.autoName || null,
+    };
     configureVoiceLibrary();
     const savedScene = flow.data.drafts.scene?.value;
     if (savedScene) {

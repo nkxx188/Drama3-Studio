@@ -1,9 +1,10 @@
-"""Lossless request splitting at natural boundaries.
+"""Request splitting at natural boundaries without losing spoken text.
 
 ``max_chars`` is a soft target for characters outside control tags, not an audio
 duration estimate. A sentence may extend past the target so the model can finish
 it; the splitter falls back to clauses, words, and finally characters when a
-sentence is longer than the soft overflow window.
+sentence is longer than the soft overflow window. Paired directions stay whole
+within that window; longer scopes are closed and reopened at chunk boundaries.
 """
 
 from __future__ import annotations
@@ -17,11 +18,10 @@ from dataclasses import dataclass
 SPEAKER_TAG = re.compile(r"<\|speaker:([0-9]+)\|>")
 PHONEME_START = "<|phoneme_start|>"
 PHONEME_END = "<|phoneme_end|>"
-_PAIRED_TAG = re.compile(
-    r"<(?P<name>whisper|emphasis|soft|fast|slow|stress|forceful)>(?P<body>.*?)"
-    r"</(?P=name)>",
-    re.DOTALL,
-)
+_SCOPE_TAG = re.compile(r"<(\/?)(whisper|emphasis|soft|fast|slow|stress|forceful)>")
+_ANGLE_TAG = re.compile(r"<[^<>\r\n]*>")
+_PHONEME_PAIR = re.compile(r"<\|phoneme_start\|>([^<>]*?)<\|phoneme_end\|>")
+_PINYIN_SYLLABLE = re.compile(r"[a-z\u00fcv\u00ea]+[1-5]", re.IGNORECASE)
 _ABBREVIATIONS = {
     "mr.",
     "mrs.",
@@ -51,41 +51,98 @@ class _Unit:
     end: int
     value: str
     protected: bool
+    width: int
 
 
-def _units(text: str) -> list[_Unit]:
+def _phoneme_width(value: str) -> int:
+    syllables = value.split()
+    if syllables and all(_PINYIN_SYLLABLE.fullmatch(part) for part in syllables):
+        return len(syllables)
+    return len(value)
+
+
+def _scope_pairs(units: list[_Unit]) -> dict[int, int]:
+    """Match nested scopes, including repeated names, without repairing bad input."""
+    pairs, stack = {}, []
+    for index, unit in enumerate(units):
+        match = _SCOPE_TAG.fullmatch(unit.value) if unit.protected else None
+        if match is None:
+            continue
+        closing, name = match.groups()
+        if not closing:
+            stack.append((name, index))
+        elif stack and stack[-1][0] == name:
+            _, start = stack.pop()
+            pairs[start] = index + 1
+        else:
+            stack.clear()
+    return pairs
+
+
+def _units(text: str, *, scope_budget: int | None = None) -> list[_Unit]:
+    bracket_ends, stack = {}, []
+    for index, character in enumerate(text):
+        if character == "[":
+            stack.append(index)
+        elif character == "]" and stack:
+            bracket_ends[stack.pop()] = index + 1
     result = []
     offset = 0
     while offset < len(text):
         start = offset
-        opening = text[offset]
-        if text.startswith(PHONEME_START, offset):
-            end = text.find(PHONEME_END, offset + len(PHONEME_START))
-            if end >= 0:
-                offset = end + len(PHONEME_END)
-                result.append(_Unit(start, offset, text[start:offset], True))
-                continue
-        paired = _PAIRED_TAG.match(text, offset)
-        if paired is not None:
-            offset = paired.end()
-            result.append(_Unit(start, offset, text[start:offset], True))
-            continue
-        if opening in "[<":
-            closing = "]" if opening == "[" else ">"
-            depth = 1
-            offset += 1
-            while offset < len(text) and depth:
-                character = text[offset]
-                if opening == "[" and character == opening:
-                    depth += 1
-                elif character == closing:
-                    depth -= 1
-                offset += 1
-            result.append(_Unit(start, offset, text[start:offset], True))
+        phoneme = _PHONEME_PAIR.match(text, offset) if text[offset] == "<" else None
+        angle = _ANGLE_TAG.match(text, offset) if text[offset] == "<" else None
+        if phoneme is not None:
+            offset = phoneme.end()
+            result.append(_Unit(start, offset, text[start:offset], True,
+                                _phoneme_width(phoneme[1])))
+        elif offset in bracket_ends:
+            offset = bracket_ends[offset]
+            result.append(_Unit(start, offset, text[start:offset], True, 0))
+        elif angle is not None:
+            offset = angle.end()
+            result.append(_Unit(start, offset, text[start:offset], True, 0))
         else:
             offset += 1
-            result.append(_Unit(start, offset, text[start:offset], False))
-    return result
+            result.append(_Unit(start, offset, text[start:offset], False, 1))
+    for index, unit in enumerate(result[:-1]):
+        if SPEAKER_TAG.fullmatch(unit.value) and result[index + 1].value == " ":
+            following = result[index + 1]
+            result[index + 1] = _Unit(
+                following.start, following.end, following.value, following.protected, 0)
+    if scope_budget is None:
+        return result
+    pairs, cumulative = _scope_pairs(result), [0]
+    for unit in result:
+        cumulative.append(cumulative[-1] + unit.width)
+    grouped, index = [], 0
+    while index < len(result):
+        end = pairs.get(index)
+        if end is not None and cumulative[end] - cumulative[index] <= scope_budget:
+            start, stop = result[index].start, result[end - 1].end
+            grouped.append(_Unit(start, stop, text[start:stop], True,
+                                 cumulative[end] - cumulative[index]))
+            index = end
+        else:
+            grouped.append(result[index])
+            index += 1
+    return grouped
+
+
+def _balanced_slices(text: str, units: list[_Unit], ranges: list[tuple[int, int]]) -> list[str]:
+    pairs = _scope_pairs(units)
+    closings = {end - 1 for end in pairs.values()}
+    active, chunks = [], []
+    for start, end in ranges:
+        prefix = "".join(f"<{name}>" for name in active)
+        for index in range(start, end):
+            if index in pairs:
+                active.append(units[index].value[1:-1])
+            elif index in closings:
+                active.pop()
+        suffix = "".join(f"</{name}>" for name in reversed(active))
+        chunks.append(prefix + text[units[start].start:units[end - 1].end] + suffix)
+    return chunks
 
 
 def _period_ends_sentence(text: str, offset: int) -> bool:
@@ -189,14 +246,7 @@ def _has_leading_speaker(units: list[_Unit], start: int, end: int) -> bool:
 
 
 def _unit_width(unit: _Unit) -> int:
-    if not unit.protected:
-        return len(unit.value)
-    paired = _PAIRED_TAG.fullmatch(unit.value)
-    if paired is not None:
-        return _content_width(paired["body"])
-    start = unit.value.find(PHONEME_START)
-    end = unit.value.find(PHONEME_END, start + len(PHONEME_START)) if start >= 0 else -1
-    return end - start - len(PHONEME_START) if end >= 0 else 0
+    return unit.width
 
 
 def _content_width(text: str) -> int:
@@ -230,10 +280,9 @@ def _choose_boundary(
 def _split_plain_text(text: str, max_chars: int) -> list[str]:
     """Split text without adding speaker prefixes.
 
-    No whitespace or punctuation is stripped. Joining the chunks after removing
-    inserted leading speaker tags recovers the original text exactly. Text
-    validity (including allowed speaker IDs and structural tokens) remains the
-    official prompt builder's responsibility.
+    No whitespace or punctuation is stripped. Long scopes receive balanced
+    closing/reopening tags on each side of a split. Text validity (including
+    speaker IDs and structural tokens) remains the prompt builder's responsibility.
     """
     if not isinstance(text, str):
         raise TypeError("text must be a string")
@@ -241,12 +290,13 @@ def _split_plain_text(text: str, max_chars: int) -> list[str]:
         raise ValueError("max_chars must be a positive integer")
     if not text:
         return []
-    units = _units(text)
+    soft_budget = max(max_chars + 1, ceil(max_chars * 1.5))
+    units = _units(text, scope_budget=soft_budget)
     sentences, clauses, spaces = _boundaries(text, units)
     cumulative = [0]
     for unit in units:
         cumulative.append(cumulative[-1] + _unit_width(unit))
-    chunks = []
+    ranges = []
     start = 0
     while start < len(units):
         if cumulative[-1] - cumulative[start] <= max_chars:
@@ -258,9 +308,16 @@ def _split_plain_text(text: str, max_chars: int) -> list[str]:
                 and cumulative[target_end + 1] - cumulative[start] <= max_chars
             ):
                 target_end += 1
-            # Control tags have zero counted width; a fallback still makes progress.
+            # A leading cue must travel with an oversized protected speech unit.
+            has_speech = any(
+                unit.width and (unit.protected or not unit.value.isspace())
+                for unit in units[start:target_end]
+            )
+            while target_end < len(units) and not has_speech:
+                unit = units[target_end]
+                has_speech = unit.width and (unit.protected or not unit.value.isspace())
+                target_end += 1
             target_end = max(start + 1, target_end)
-            soft_budget = max(max_chars + 1, ceil(max_chars * 1.5))
             soft_end = target_end
             while (
                 soft_end < len(units)
@@ -284,8 +341,11 @@ def _split_plain_text(text: str, max_chars: int) -> list[str]:
                     and _inside_word(units, end)
                 ):
                     end += 1
-            # Attach trailing whitespace to its text, avoiding a whitespace-only tail.
-            while end < len(units) and units[end].value.isspace():
+            # Keep closing tags and trailing whitespace with their preceding text.
+            while end < len(units) and (
+                units[end].value.isspace()
+                or units[end].width == 0 and units[end].value.startswith("</")
+            ):
                 end += 1
             # A direction or speaker at the limit belongs to the following words.
             # Zero-width tags must not drift onto the previous generation request.
@@ -295,7 +355,7 @@ def _split_plain_text(text: str, max_chars: int) -> list[str]:
                     unit = units[probe - 1]
                     if unit.value.isspace():
                         probe -= 1
-                    elif unit.protected and not unit.value.startswith("</"):
+                    elif unit.protected and unit.width == 0 and not unit.value.startswith("</"):
                         probe -= 1
                         tag_start = probe
                     else:
@@ -305,29 +365,31 @@ def _split_plain_text(text: str, max_chars: int) -> list[str]:
                     and cumulative[tag_start] > cumulative[start]
                 ):
                     end = tag_start
-        chunk = text[units[start].start : units[end - 1].end]
-        chunks.append(chunk)
+        ranges.append((start, end))
         start = end
-    return chunks
+    return _balanced_slices(text, units, ranges)
 
 
 def _speaker_segments(text: str) -> list[tuple[str, str]]:
-    """Return speaker/body pairs, keeping untagged text as speaker 0."""
-    matches = list(SPEAKER_TAG.finditer(text))
+    """Return balanced speaker turns, keeping untagged speech as speaker 0."""
+    units = _units(text)
+    matches = [(index, match[1]) for index, unit in enumerate(units)
+               if (match := SPEAKER_TAG.fullmatch(unit.value)) is not None]
     if not matches:
         return []
-    segments = []
-    prefix = text[:matches[0].start()]
-    if prefix and prefix.strip() and not prefix.lstrip().startswith("["):
-        segments.append(("0", prefix))
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        body = text[match.end():end]
-        if index == 0 and (not prefix.strip() or prefix.lstrip().startswith("[")):
-            body = prefix + body
-        if body:
-            segments.append((match.group(1), body))
-    return segments
+    speakers, ranges = [], []
+    prefix_end = matches[0][0]
+    has_prefix_text = any(unit.width and not unit.value.isspace() for unit in units[:prefix_end])
+    if has_prefix_text:
+        speakers.append("0")
+        ranges.append((0, prefix_end))
+    for index, (start, speaker) in enumerate(matches):
+        end = matches[index + 1][0] if index + 1 < len(matches) else len(units)
+        if index == 0 and not has_prefix_text:
+            start = 0
+        speakers.append(speaker)
+        ranges.append((start, end))
+    return list(zip(speakers, _balanced_slices(text, units, ranges)))
 
 
 def _split_speaker_text(text: str, max_chars: int, max_speakers: int = 3) -> list[str]:
@@ -339,7 +401,8 @@ def _split_speaker_text(text: str, max_chars: int, max_speakers: int = 3) -> lis
     for speaker, body in _speaker_segments(text):
         for piece in _split_plain_text(body, max_chars):
             if piece:
-                pieces.append((speaker, f"<|speaker:{speaker}|>{piece}"))
+                tagged = piece if SPEAKER_TAG.search(piece) else f"<|speaker:{speaker}|>{piece}"
+                pieces.append((speaker, tagged))
     if not pieces:
         return _split_plain_text(text, max_chars)
     chunks, batch, speakers, width = [], [], set(), 0
@@ -364,8 +427,8 @@ def split_text(text: str, max_chars: int = 200, *, max_speakers: int = 3) -> lis
     """Split text and tagged dialogue without breaking natural control units.
 
     Later chunks receive an inherited speaker tag when needed. Those inserted
-    prefixes are not part of the original transcript and are intentionally
-    removed when saved full text is reconstructed.
+    prefixes and scope-balancing tags are only for individual inference requests;
+    callers retain the original full transcript in saved takes.
     """
     if not isinstance(text, str):
         raise TypeError("text must be a string")

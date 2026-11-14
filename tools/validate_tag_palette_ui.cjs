@@ -84,6 +84,12 @@ const expected = [
     }, { from, to, activate });
     await page.goto(base, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => document.documentElement.dataset.studioReady === 'true');
+    const countCases = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/text_content_counts.json'), 'utf8'));
+    for (const [index, item] of countCases.entries()) {
+      await editor().fill(item.text);
+      check(`spoken_character_count_${index}`, await page.locator('#text-count').textContent() === `${item.count} 个字符`
+        && await page.evaluate(text => ScriptEditor.contentWidth(text), item.text) === item.count);
+    }
     await editor().fill('你好，这是一次本地语音测试。');
     await editor().press('End');
     // Same-turn native selection reproduces a browser selection pending before CM's observer flush.
@@ -115,6 +121,8 @@ const expected = [
     check('one_pinyin_syllable_is_wrapped_per_hanzi',
       await page.inputValue('#text') ===
         '<|phoneme_start|>chong2<|phoneme_end|><|phoneme_start|>qing4<|phoneme_end|>今天出发。');
+    check('adding_pronunciation_does_not_change_spoken_character_count',
+      await page.locator('#text-count').textContent() === '7 个字符');
     check('phoneme_controls_receive_editor_decoration',
       await editor().locator('.script-phoneme').count() === 2);
     await editor().locator('.script-phoneme').first().click();

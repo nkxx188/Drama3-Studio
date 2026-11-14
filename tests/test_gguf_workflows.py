@@ -51,6 +51,19 @@ def test_long_tts_keeps_real_first_and_recent_chunk_anchors(tmp_path):
     assert metadata["spoken_text"] == "One. Two. Three."
 
 
+def test_native_long_scope_is_balanced_per_request_and_keeps_original_take_text(tmp_path):
+    engine = Native()
+    text = "[calm]<soft>" + ("甲" * 169 + "。") * 3 + "</soft>"
+    result = GGUFWorkflows(engine).run("tts", text, tmp_path / "scoped.wav", max_chunk_chars=160)
+    assert result["status"] == "complete" and len(engine.calls) == 3
+    assert all(chunk.count("<soft>") == chunk.count("</soft>") == 1 for chunk, _ in engine.calls)
+    take, metadata, chunks = load_native_take(result["take_file"])
+    assert take.text == "<|speaker:0|> " + text and metadata["spoken_text"] == text
+    assert [chunk.text for chunk in chunks] == [chunk for chunk, _ in engine.calls]
+    assert [take.text for take in engine.calls[-1][1]["previous_takes"]] == [
+        engine.calls[0][0], engine.calls[1][0]]
+
+
 def test_native_silence_retry_keeps_good_chunks_and_never_conditions_on_bad_audio(tmp_path):
     class SilentNative(Native):
         def generate(self, text, output, **kwargs):

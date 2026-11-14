@@ -692,6 +692,30 @@ def test_create_job_records_a_serialized_payload_before_worker_runs(tmp_path, mo
         state.shutdown()
 
 
+def test_history_counts_spoken_text_and_recounts_old_summaries_on_reload(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    state = server.AppState()
+    defer_workers(state)
+    text = "[开心]<soft>你好，<|phoneme_start|>chong2<|phoneme_end|>庆。</soft>"
+    try:
+        job_id = state.create_job({"text": text})
+        saved = state.job(job_id)
+        assert saved["payload_summary"]["text_length"] == 6
+        assert saved["recipe"]["text"] == text
+        with state._jobs_lock:
+            state._jobs[job_id]["payload_summary"]["text_length"] = len(text)
+            state._persist_job_locked(job_id)
+        reloaded = server.AppState(data_root=state.data_root)
+        try:
+            assert reloaded.job(job_id)["payload_summary"]["text_length"] == 6
+            assert reloaded.jobs()[0]["payload_summary"]["text_length"] == 6
+            assert reloaded.job(job_id)["recipe"]["text"] == text
+        finally:
+            reloaded.shutdown()
+    finally:
+        state.shutdown()
+
+
 def test_stream_jobs_persist_delivered_lookahead_metadata(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "ROOT", tmp_path)
 
