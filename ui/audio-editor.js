@@ -549,6 +549,7 @@
         textarea.readOnly = context.busy; ScriptEditor.sync(textarea);
       }
       insert.disabled ||= !Number.isFinite(audio.duration);
+      audio.toggleAttribute('data-selection-locked', context.busy);
       random.disabled = context.busy;
       paramInputs.seed.disabled = context.busy || random.checked;
       direction.disabled = context.busy || caps.direction === false;

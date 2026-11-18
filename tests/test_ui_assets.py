@@ -153,9 +153,10 @@ def test_model_downloader_promotes_gguf_without_overwriting_user_selection():
     assert f"['{recommendation}'," in i18n
     assert "推荐使用 GGUF 模型，速度更快。" in i18n
     assert "const preferredDownloadModelId = 'gguf-8bit-f32-routers-bf16-embed-head-experts-q4-k-s';" in JS
-    assert "const models = [...state.modelCatalog].sort" in JS
+    assert "state.modelCatalog.filter(model => model.id.startsWith('gguf-') || model.id === pending).sort" in JS
     assert "Number(second.id.startsWith('gguf-')) - Number(first.id.startsWith('gguf-'))" in JS
     assert "const pending = active ? state.modelTask.model_id : select.value;" in JS
+    assert "state.modelCatalog.some(model => model.id === task.model_id)" in JS
     assert "if (models.some(model => model.id === pending)) select.value = pending;" in JS
     assert "models.find(model => model.id === preferredDownloadModelId)?.id || models[0].id" in JS
 

@@ -47,6 +47,11 @@ process.env.TEMP = process.env.TMP = path.join(root, '.cache', 'tmp');
     report.checks.download_catalog_covers_requested_formats =
       ['fp8', 'int4', 'int8', 'w4a8', 'w6a8'].every(id => catalog.models.some(model => model.id === id))
       && catalog.models.some(model => model.id.startsWith('gguf-'));
+    report.checks.downloader_shows_only_gguf_without_pruning_backend_catalog =
+      await page.locator('#model-download-choice option').evaluateAll(options => options.length > 0
+        && options.every(option => option.value.startsWith('gguf-')))
+      && catalog.models.some(model => model.id === 'fp8')
+      && catalog.models.some(model => model.id.startsWith('gguf-'));
     report.checks.download_controls_visible = await page.locator('#model-download-choice').isVisible()
       && await page.locator('#model-download-sources').isVisible()
       && await page.locator('#download-model').isVisible()

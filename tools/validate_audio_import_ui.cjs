@@ -31,9 +31,10 @@ const report = { scope: 'One-page upload editing, automatic ASR, deferred codec,
       return route.fulfill({ json: rejectAsr ? { status: 'skipped' }
         : { id: 'fixture-asr', status: 'complete', result: { text: '明天我们一起出发。' } } });
     });
-    const finish = async () => {
+    const finish = async duringRun => {
       const previous = await page.locator('#audio-import-result-box').getAttribute('data-job-id');
       await page.locator('#audio-import-submit').click();
+      if (duringRun) await duringRun();
       await page.waitForFunction(previous => {
         const box = document.querySelector('#audio-import-result-box');
         return box?.dataset.jobId && box.dataset.jobId !== previous
@@ -100,10 +101,38 @@ const report = { scope: 'One-page upload editing, automatic ASR, deferred codec,
     await page.locator('#audio-import-player').evaluate(audio => StudioAudio.setSelection(audio, 1, 2, { emit: true }));
     await page.locator('#audio-import-quote').fill('明天');
     await replacement().fill('今天');
-    const local = await finish();
+    const sourcePlayer = page.locator('#audio-import-preview .studio-player');
+    const region = sourcePlayer.locator('.player-region');
+    const endHandle = region.locator('.region-end');
+    const readRange = () => page.locator('#audio-import-player').evaluate(audio => StudioAudio.selection(audio));
+    const selected = await readRange();
+    const rangeLabel = await sourcePlayer.locator('.player-region-info').textContent();
+    forcedPhase = 'generation';
+    const local = await finish(async () => {
+      await page.locator('#audio-import-results[data-state="running"]').waitFor();
+      check('running_local_edit_keeps_waveform_range_visible_and_listenable',
+        await region.isVisible() && await sourcePlayer.locator('.player-region-info').textContent() === rangeLabel
+        && await sourcePlayer.locator('.player-preview-selection').isEnabled());
+      const wave = sourcePlayer.locator('.player-wave-surface');
+      await wave.scrollIntoViewIfNeeded();
+      const bounds = await wave.boundingBox();
+      const y = bounds.y + bounds.height / 2;
+      await page.mouse.move(bounds.x + bounds.width * .45, y);
+      await page.mouse.down();
+      await page.mouse.move(bounds.x + bounds.width * .75, y, { steps: 8 });
+      await page.mouse.up();
+      check('running_local_edit_locks_range_changes', await endHandle.isDisabled()
+        && JSON.stringify(await readRange()) === JSON.stringify(selected));
+      forcedPhase = null;
+    });
+    check('completed_local_edit_keeps_the_range_and_unlocks_its_handles',
+      await region.isVisible() && await endHandle.isEnabled()
+      && JSON.stringify(await readRange()) === JSON.stringify(selected));
     check('local_edit_reuses_codes_and_preserves_unselected_codes',
       local.recipe.mode === 'infill' && local.recipe.text === '<|speaker:0|> 今天我们一起出发。'
       && local.source_preparation.codec_cache_hit === true
+      && local.recipe.start_frame === Math.round(selected.start * 44100 / 2048)
+      && local.recipe.end_frame === Math.round(selected.end * 44100 / 2048)
       && local.result.infill.prefix_codes_equal && local.result.infill.suffix_codes_equal);
     check('only_edit_results_appear_in_history',
       (await api('/api/jobs')).jobs.length === 2 && !(await api('/api/jobs')).jobs.some(job => job.mode === 'audio_import'));

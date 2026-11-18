@@ -126,7 +126,8 @@
     if (audio.getAttribute('src') !== src) {
       if (src) audio.src = src; else audio.removeAttribute('src');
     }
-    if (audio.dataset.selection !== String(local && !busy)) audio.dataset.selection = String(local && !busy);
+    if (audio.dataset.selection !== String(local)) audio.dataset.selection = String(local);
+    audio.toggleAttribute('data-selection-locked', local && busy);
     $('local').hidden = !local; $('whole').hidden = local;
     $('original').hidden = !hasAudio;
     $('asr-status').textContent = message(asrStatus);

@@ -590,6 +590,8 @@ input[type="checkbox"] { accent-color: var(--accent); margin-top: 5px; }
 .player-transport { width: 100%; }
 .player-wave-surface { display: none; position: relative; height: 86px; overflow: hidden; border-radius: 6px; background: #f8f9fc; cursor: crosshair; touch-action: none; user-select: none; }
 .with-waveform .player-wave-surface { display: block; }
+.selection-locked .player-wave-surface { cursor: pointer; }
+.selection-locked .player-region { pointer-events: none; }
 .player-wave { height: 86px; pointer-events: none; }
 .player-wave rect { fill: #8e9eaf; }
 .player-wave rect.played { fill: #bb654b; }

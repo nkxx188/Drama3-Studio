@@ -117,6 +117,7 @@
     players.set(audio, ui); all.add(ui);
     const valid = () => Number.isFinite(audio.duration) && audio.duration > 0;
     const selectable = () => audio.dataset.selection === 'true';
+    const canEditSelection = () => selectable() && !audio.hasAttribute('data-selection-locked');
     const width = () => audio.duration / ui.zoom;
     const maxZoom = () => Math.max(8, audio.duration);
     const fraction = value => (value - ui.offset) / width();
@@ -139,9 +140,11 @@
     }
     function renderRegion() {
       const has = valid() && selectable() && ui.selection !== null;
+      const editable = canEditSelection();
       region.hidden = !has; box.classList.toggle('has-selection', has);
       preview.hidden = !has;
       clear.hidden = !has || audio.dataset.selectionRequired === 'true';
+      clear.disabled = !editable;
       if (has) {
         const first = fraction(ui.selection.start), last = fraction(ui.selection.end);
         region.style.left = `${clamp(first, 0, 1) * 100}%`;
@@ -149,6 +152,7 @@
         handles[0].hidden = first < 0 || first > 1; handles[1].hidden = last < 0 || last > 1;
         handles.forEach((handle, index) => {
           const edge = index ? 'end' : 'start';
+          handle.disabled = !editable;
           handle.setAttribute('aria-label', t(index ? 'Selection end' : 'Selection start'));
           handle.setAttribute('aria-valuemin', '0'); handle.setAttribute('aria-valuemax', String(Number(audio.duration.toFixed(2))));
           handle.setAttribute('aria-valuenow', String(Number(ui.selection[edge].toFixed(2))));
@@ -245,8 +249,9 @@
       if (!timeline.hidden) ticks.forEach((tick, index) =>
         setText(tick, clock(ui.offset + width() * index / (ticks.length - 1), width() < 5)));
       box.classList.toggle('wave-selectable', selectable());
+      box.classList.toggle('selection-locked', selectable() && !canEditSelection());
       hint.textContent = ''; hint.hidden = true;
-      surface.title = selectable() && !ui.selection ? t('Drag on the waveform to select') : '';
+      surface.title = canEditSelection() && !ui.selection ? t('Drag on the waveform to select') : '';
       surface.setAttribute('aria-label', t('Audio waveform')); renderRegion();
     }
     async function startPlayback(end = null) {
@@ -274,7 +279,10 @@
       if (!resume) audio.currentTime = ui.selection.start;
       startPlayback(ui.selection.end);
     };
-    clear.onclick = () => { ui.selection = null; ui.stopAt = null; update(); notify(); };
+    clear.onclick = () => {
+      if (!canEditSelection()) return;
+      ui.selection = null; ui.stopAt = null; update(); notify();
+    };
     seek.addEventListener('input', () => {
       if (!seek.disabled) {
         ui.stopAt = null; audio.currentTime = Number(seek.value); ui.followPlayback = true; revealPlayhead();
@@ -307,16 +315,17 @@
     surface.addEventListener('pointerdown', event => {
       if (!valid() || event.button !== 0 || drag) return;
       event.preventDefault(); audio.pause(); ui.stopAt = null; ui.followPlayback = false;
-      const edge = event.target.closest('[data-edge]')?.dataset.edge;
+      const editing = canEditSelection();
+      const edge = editing ? event.target.closest('[data-edge]')?.dataset.edge : undefined;
       drag = { id: event.pointerId, x: event.clientX, lastX: event.clientX, offset: ui.offset, anchor: timeAt(event),
-        edge, move: !edge && ui.selection?.end > ui.selection?.start && region.contains(event.target),
+        edge, editing, move: editing && !edge && ui.selection?.end > ui.selection?.start && region.contains(event.target),
         secondsPerPixel: width() / surface.getBoundingClientRect().width,
         prior: ui.selection ? { ...ui.selection } : null, moved: false };
       surface.setPointerCapture(event.pointerId);
     });
     function applyDrag(clientX) {
       const value = timeAt({ clientX });
-      if (selectable()) {
+      if (drag.editing && canEditSelection()) {
         if (drag.edge && drag.prior) {
           const other = drag.edge === 'start' ? drag.prior.end : drag.prior.start;
           setSelection(drag.edge === 'start' ? Math.min(value, other) : other,
@@ -337,7 +346,7 @@
     }
     function scrollAtEdge(now) {
       edgeRaf = null;
-      if (!drag?.moved || !selectable() || ui.zoom === 1) return;
+      if (!drag?.moved || !drag.editing || !canEditSelection() || ui.zoom === 1) return;
       const bounds = surface.getBoundingClientRect();
       const direction = drag.lastX < bounds.left + 16 ? -1 : drag.lastX > bounds.right - 16 ? 1 : 0;
       if (!direction) { drag.edgeTime = null; return; }
@@ -371,7 +380,7 @@
     surface.addEventListener('pointercancel', cancelDrag);
     surface.addEventListener('lostpointercapture', cancelDrag);
     for (const handle of handles) handle.addEventListener('keydown', event => {
-      if (!ui.selection || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      if (!canEditSelection() || !ui.selection || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       const edge = handle.dataset.edge;
       const step = (Number(audio.dataset.frameSeconds) || 0.01) * (event.shiftKey ? 10 : 1);
@@ -403,7 +412,8 @@
       audio.addEventListener(name, update);
     }
     new MutationObserver(() => { update(); if (audio.preload !== 'none') loadWave(); }).observe(audio, {
-      attributes: true, attributeFilter: ['src', 'data-selection', 'data-frame-seconds'],
+      attributes: true,
+      attributeFilter: ['src', 'data-selection', 'data-selection-locked', 'data-frame-seconds'],
     });
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) {

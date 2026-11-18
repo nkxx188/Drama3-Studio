@@ -456,7 +456,7 @@ function renderModelDownloadCatalog() {
   if (!select) return;
   const active = modelDownloadActive(state.modelTask);
   const pending = active ? state.modelTask.model_id : select.value;
-  const models = [...state.modelCatalog].sort((first, second) =>
+  const models = state.modelCatalog.filter(model => model.id.startsWith('gguf-') || model.id === pending).sort((first, second) =>
     Number(second.id.startsWith('gguf-')) - Number(first.id.startsWith('gguf-')));
   select.replaceChildren();
   for (const model of models) {

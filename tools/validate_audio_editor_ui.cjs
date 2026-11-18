@@ -4,7 +4,7 @@ const root = path.resolve(__dirname, '..'), base = process.env.DRAMA_UI_URL, fol
 const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit snippet mapping, exact codec boundaries, references and persistence; synthetic inference.',
   checks: {}, errors: [], screenshots: [] };
 (async () => {
-  let browser, page, releasePoll;
+  let browser, page, releasePoll, releaseLocalPoll;
   try {
     browser = await chromium.launch({ channel: 'chrome', headless: true });
     const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' });
@@ -48,11 +48,12 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
       await page.waitForFunction(() => document.querySelector('#audio-edit-source')?.duration > 0);
       await page.locator(`#audio-edit-workspace [data-edit-mode="${mode}"]`).click();
     };
-    const finish = async (selector = '#audio-edit-submit') => {
+    const finish = async (selector = '#audio-edit-submit', duringRun = null) => {
       const previous = await page.evaluate(() => StudioFlow.flow.lastSubmit?.id || '');
       const editing = selector === '#audio-edit-submit';
       const originalId = await page.locator('#result-box').getAttribute('data-job-id');
       await page.locator(selector).click();
+      if (duringRun) await duringRun();
       await page.waitForFunction(({ previous, editing }) => {
         const id = StudioFlow.flow.lastSubmit?.id;
         const box = document.querySelector(editing ? '#audio-edit-result-box' : '#result-box');
@@ -68,6 +69,12 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
           && await page.evaluate(id => !Object.values(state.resultJobs).some(job => job?.id === id), result.id)
           && await page.locator('#audio-edit-result-box .main-result audio').getAttribute('src')
             === await page.evaluate(output => fileUrl(output), result.output));
+        if (duringRun && await page.locator('#audio-edit-source').evaluate(audio => Boolean(StudioAudio.selection(audio)))) {
+          check('completed_edit_keeps_selection_visible_and_unlocks_range',
+            await page.locator('#audio-edit-workspace .audio-edit-source .player-region').isVisible()
+            && await page.locator('#audio-edit-workspace .audio-edit-source .player-region-handle.region-end').isEnabled()
+            && !await page.locator('#audio-edit-source').evaluate(audio => audio.hasAttribute('data-selection-locked')));
+        }
         await close();
       }
       (report.requests ||= []).push({ id: result.id, status: result.status, text: result.recipe.text,
@@ -171,7 +178,42 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
       && await page.inputValue('#text') === untouched
       && await page.locator('#audio-edit-source').evaluate((audio, range) =>
         JSON.stringify(StudioAudio.selection(audio)) === JSON.stringify(range), selected));
-    const local = await finish();
+    let localJobId, signalLocalPoll;
+    const localPollSeen = new Promise(resolve => { signalLocalPoll = resolve; });
+    const localPollGate = new Promise(resolve => { releaseLocalPoll = resolve; });
+    const captureLocalCreate = async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      const response = await route.fetch(); localJobId = (await response.json()).id;
+      await route.fulfill({ response });
+    };
+    const holdLocalPoll = async route => {
+      if (route.request().method() === 'GET' && route.request().url().endsWith('/' + localJobId)) {
+        signalLocalPoll(); await localPollGate;
+      }
+      await route.continue();
+    };
+    await page.route('**/api/jobs', captureLocalCreate);
+    await page.route('**/api/jobs/*', holdLocalPoll);
+    const local = await finish('#audio-edit-submit', async () => {
+      await localPollSeen;
+      const sourcePlayer = page.locator('#audio-edit-workspace .audio-edit-source .studio-player');
+      const region = sourcePlayer.locator('.player-region'), handle = region.locator('.region-end');
+      check('running_edit_keeps_selected_audio_range_visible_and_previewable',
+        await region.isVisible() && await sourcePlayer.locator('.player-preview-selection').isEnabled()
+        && await page.locator('#audio-edit-source').evaluate(audio => audio.hasAttribute('data-selection-locked')));
+      const wave = sourcePlayer.locator('.player-wave-surface'), bounds = await wave.boundingBox();
+      const before = await page.locator('#audio-edit-source').evaluate(audio => StudioAudio.selection(audio));
+      const y = bounds.y + bounds.height / 2;
+      await page.mouse.move(bounds.x + bounds.width * .15, y);
+      await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width * .85, y, { steps: 8 });
+      await page.mouse.up();
+      check('running_edit_locks_audio_range_handles_and_drag', await handle.isDisabled()
+        && JSON.stringify(await page.locator('#audio-edit-source').evaluate(audio => StudioAudio.selection(audio)))
+          === JSON.stringify(before));
+      releaseLocalPoll();
+    });
+    await page.unroute('**/api/jobs', captureLocalCreate);
+    await page.unroute('**/api/jobs/*', holdLocalPoll);
     check('local_request_reconstructs_full_text_and_keeps_other_audio_codes',
       local.recipe.text === '明天上午我们一起出发。' && local.recipe.operation === 'infill'
       && local.recipe.source_take === first.take_file && local.result.infill.prefix_codes_equal
@@ -444,6 +486,7 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
     }
   } finally {
     releasePoll?.();
+    releaseLocalPoll?.();
     if (browser) await browser.close();
     report.passed = !report.errors.length && Object.values(report.checks).every(Boolean);
     fs.writeFileSync(path.join(root, 'research/2026-10-19-audio-editor-ui-acceptance.json'), JSON.stringify(report, null, 2));

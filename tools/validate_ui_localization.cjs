@@ -331,6 +331,11 @@ fs.mkdirSync(screenshotFolder, { recursive: true });
       await page.locator('#scene-lines .repeat-row').last().locator('button').click();
       await page.click('.nav[data-view="settings"]');
       const downloadCatalog = (await api('/api/model/catalog')).value.models;
+      report.checks.downloader_defaults_to_gguf_while_catalog_retains_alternatives =
+        await page.locator('#model-download-choice option').evaluateAll(options => options.length > 0
+          && options.every(option => option.value.startsWith('gguf-')))
+        && downloadCatalog.some(model => model.id === 'fp8')
+        && downloadCatalog.some(model => model.id.startsWith('gguf-'));
       report.checks.local_model_setup_with_downloader = await page.locator('#installed-model').isVisible()
         && await page.locator('#model-root-list').isVisible()
         && await page.locator('#browse-model-directory').isVisible()
