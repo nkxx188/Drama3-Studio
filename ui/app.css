@@ -387,6 +387,8 @@ input[type="checkbox"] { accent-color: var(--accent); margin-top: 5px; }
 .model-download-task { margin-top: 14px; padding: 12px 0 0; border-top: 1px solid var(--line); }
 .model-download-task-heading, .model-download-task-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; }
 .model-download-task-heading { color: var(--text); font-size: var(--type-action); }
+.model-download-task-heading > strong { flex: 1 1 auto; }
+.model-download-dismiss { width: 28px; height: 28px; flex-basis: 28px; }
 .model-download-task-heading > span, .model-download-task-footer > span { color: var(--muted); font-size: var(--type-meta); font-variant-numeric: tabular-nums; }
 .model-download-task progress { display: block; width: 100%; height: 8px; margin: 10px 0 7px; overflow: hidden; border: 0; border-radius: 8px; background: #e8ebef; accent-color: var(--accent); }
 .model-download-task progress::-webkit-progress-bar { border-radius: 8px; background: #e8ebef; }

@@ -280,6 +280,17 @@ class ModelInstallation:
                 self._save()
             return self.snapshot()
 
+    def dismiss(self):
+        with self._lock:
+            if not self._task:
+                return None
+            if self._task.get("status") in ("queued", "running", "cancelling"):
+                raise RuntimeError("A running model operation cannot be dismissed")
+            self.state_file.unlink(missing_ok=True)
+            self._task = None
+            self._future = None
+            return None
+
     def _progress(self, event):
         with self._lock:
             self._task["progress"] = event

@@ -104,7 +104,8 @@ def test_model_settings_keep_local_setup_and_add_model_catalog_downloader():
     assert "GGUF" not in picker and "GGUF" in i18n
     for marker in ('id="model-download-choice"', 'id="model-download-sources"',
                    'id="download-model"', 'id="model-download-task"',
-                   'id="model-download-progress"', 'id="cancel-model-download"'):
+                   'id="model-download-progress"', 'id="cancel-model-download"',
+                   'id="dismiss-model-download"'):
         assert marker in HTML
     for marker in ("renderModelTask", "pollModelTask", "modelDownloadActive",
                    "downloadSelectedModel", "/api/model/catalog", "/api/model/tasks"):
@@ -114,6 +115,8 @@ def test_model_settings_keep_local_setup_and_add_model_catalog_downloader():
         assert marker in server
     assert "download-catalog.json" in catalog
     assert "parallel chunks and SHA256 verification" in i18n
+    assert "api('/api/model/dismiss'" in JS
+    assert 'if path == "/api/model/dismiss":' in server
 
 
 def test_model_downloader_has_an_independent_quark_manual_download_link():

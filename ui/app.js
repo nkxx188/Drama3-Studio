@@ -511,6 +511,7 @@ function renderModelTask(task) {
   const active = modelDownloadActive(task);
   box.hidden = !task || task.operation !== 'download';
   box.dataset.state = task?.status || '';
+  $('dismiss-model-download').hidden = !task || active;
   renderModelDownloadCatalog();
   if (box.hidden) return;
   const progress = task.progress || {};
@@ -734,6 +735,16 @@ $('cancel-model-download').onclick = async () => {
   } catch (error) {
     $('model-download-message').textContent = message(error.message);
   } finally { $('cancel-model-download').disabled = false; }
+};
+$('dismiss-model-download').onclick = async () => {
+  const button = $('dismiss-model-download');
+  button.disabled = true;
+  try {
+    const result = await api('/api/model/dismiss', { method: 'POST', body: '{}' });
+    renderModelTask(result.task);
+  } catch (error) {
+    $('model-download-message').textContent = message(error.message);
+  } finally { button.disabled = false; }
 };
 document.addEventListener('drama:languagechange', renderModelDownloadCatalog);
 async function inspectModel() {

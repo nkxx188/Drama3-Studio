@@ -2937,6 +2937,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(202, {"task": task})
             if path == "/api/model/cancel":
                 return self._json(202, {"task": STATE.model_installation.cancel()})
+            if path == "/api/model/dismiss":
+                return self._json(200, {"task": STATE.model_installation.dismiss()})
             if path == "/api/takes/inspect":
                 return self._json(200, STATE.inspect_take(self._payload()["path"]))
             if path.startswith("/api/jobs/") and path.endswith("/cancel"):

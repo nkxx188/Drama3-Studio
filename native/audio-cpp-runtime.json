@@ -1,8 +1,8 @@
 {
   "upstream": "624cf918e51263d39c2a0d28a6c5e3d55990b79f",
   "patch": "native\\audio-cpp-runtime.patch",
-  "sha256": "114cd0d278070400c1643441f9239d84cc54b42ef99815aee1187d23bd8c59c2",
-  "bytes": 179258,
+  "sha256": "26098ede47f8b5ec776b084bf0fea36fc4c96b1ea05a3c35bd30f354476e2bc3",
+  "bytes": 183293,
   "native_protocol": 5,
   "features": [
     "ordinary",

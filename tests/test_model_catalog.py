@@ -30,6 +30,42 @@ def test_download_catalog_covers_supported_precision_families_and_channels():
     assert all(model["total_bytes"] > 0 for model in rows)
 
 
+def test_terminal_model_task_can_be_dismissed_without_removing_downloads(tmp_path):
+    data_root = tmp_path / "ui_data"
+    checkpoints = tmp_path / "checkpoints"
+    model_file = checkpoints / "model.gguf"
+    model_file.parent.mkdir()
+    model_file.write_bytes(b"verified model")
+    installer = ModelInstallation(data_root, checkpoint_root=checkpoints)
+    try:
+        installer._task = {"id": "completed", "operation": "download", "status": "complete"}
+        installer._save()
+        assert installer.dismiss() is None
+        assert installer.snapshot() is None
+        assert not installer.state_file.exists()
+        assert model_file.read_bytes() == b"verified model"
+        restored = ModelInstallation(data_root, checkpoint_root=checkpoints)
+        try:
+            assert restored.snapshot() is None
+        finally:
+            restored.close()
+    finally:
+        installer.close()
+
+
+def test_running_model_task_cannot_be_dismissed(tmp_path):
+    installer = ModelInstallation(tmp_path / "ui_data")
+    try:
+        installer._task = {"id": "running", "operation": "download", "status": "running"}
+        installer._save()
+        with pytest.raises(RuntimeError, match="cannot be dismissed"):
+            installer.dismiss()
+        assert installer.snapshot()["status"] == "running"
+        assert installer.state_file.is_file()
+    finally:
+        installer.close()
+
+
 def test_catalog_file_urls_honor_each_pinned_repository(tmp_path):
     int8 = get_model("int8")
     downloader = Downloader(

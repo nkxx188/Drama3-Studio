@@ -2327,6 +2327,38 @@ index f28bffd..6758fda 100644
          ids = self.impl_->stage(std::move(ids), found->second);
          started = std::chrono::steady_clock::now();
          ggml_backend_tensor_set(tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
+diff --git a/src/framework/model_spec/schema.cpp b/src/framework/model_spec/schema.cpp
+index c42c502..5a9e4f0 100644
+--- a/src/framework/model_spec/schema.cpp
++++ b/src/framework/model_spec/schema.cpp
+@@ -105,14 +105,6 @@ const std::unordered_set<std::string> & source_formats() {
+     return values;
+ }
+ 
+-const std::unordered_set<std::string> & precisions() {
+-    static const std::unordered_set<std::string> values = {
+-        "native", "orig", "f32", "f16", "bf16",
+-        "q8_0", "q6_k", "q5_k_m", "q5_k_s", "q4_k_m", "q4_k_s", "q4_k", "q4_0", "q3_k_m", "q3_k_s", "q2_k",
+-    };
+-    return values;
+-}
+-
+ const std::unordered_set<std::string> & download_kinds() {
+     static const std::unordered_set<std::string> values = {
+         "huggingface_snapshot", "modelscope_snapshot", "local_snapshot", "converter", "unsupported",
+@@ -536,8 +528,10 @@ ValidatedPackage validate_package(const json::Value & value, std::string_view pa
+     (void) require_spec_string(require_spec_field(value, "display_name", path), std::string(path) + ".display_name");
+     const auto format = require_spec_string(require_spec_field(value, "format", path), std::string(path) + ".format");
+     validate_enum(format, source_formats(), std::string(path) + ".format", "format");
+-    const auto precision = require_spec_string(require_spec_field(value, "precision", path), std::string(path) + ".precision");
+-    validate_enum(precision, precisions(), std::string(path) + ".precision", "precision");
++    // Precision is descriptive package metadata. Keep its vocabulary open so
++    // embedded specs can list newer GGUF variants; tensor support is checked
++    // independently by the GGUF loader for the selected model file.
++    (void) require_spec_string(require_spec_field(value, "precision", path), std::string(path) + ".precision");
+     (void) require_spec_string(require_spec_field(value, "target_directory", path), std::string(path) + ".target_directory");
+     validate_string_array(require_spec_field(value, "files", path), nullptr, std::string(path) + ".files", "file");
+     if (value.require("files").as_array().empty()) {
 diff --git a/src/framework/modules/conv_modules.cpp b/src/framework/modules/conv_modules.cpp
 index d3f5b33..4f80167 100644
 --- a/src/framework/modules/conv_modules.cpp
@@ -2512,6 +2544,43 @@ index e1ba0c2..a0b154f 100644
              const auto expected_type = type == assets::TensorStorageType::Q4_K ? "q4_k" : "f32";
              if (source->require_metadata(names[0]).dtype != expected_type)
                  throw std::runtime_error("fixture expert dtype mismatch");
+diff --git a/tests/unittests/test_model_spec_system.cpp b/tests/unittests/test_model_spec_system.cpp
+index e3a4a5d..bd6843e 100644
+--- a/tests/unittests/test_model_spec_system.cpp
++++ b/tests/unittests/test_model_spec_system.cpp
+@@ -257,6 +257,24 @@ void test_download_kinds_schema() {
+         "missing required field 'repo'");
+ }
+ 
++void test_package_precision_is_open_vocabulary() {
++    const std::string marker = "\"precision\": \"q8_0\"";
++    for (const auto & precision : {"iq2_xxs", "iq2_xs", "iq2_s", "iq3_xxs", "iq4_xs",
++                                   "experimental_groupwise_int3"}) {
++        auto spec = schema_v1_spec_text("[]");
++        const auto at = spec.find(marker);
++        engine::test::require(at != std::string::npos, "package precision fixture anchor exists");
++        spec.replace(at, marker.size(), "\"precision\": \"" + std::string(precision) + "\"");
++        engine::model_spec::validate_spec(json::parse(spec), precision);
++    }
++
++    auto empty_precision = schema_v1_spec_text("[]");
++    const auto at = empty_precision.find(marker);
++    engine::test::require(at != std::string::npos, "empty package precision fixture anchor exists");
++    empty_precision.replace(at, marker.size(), "\"precision\": \"\"");
++    expect_rejects("empty_package_precision", empty_precision, "packages[0].precision: expected non-empty string");
++}
++
+ void test_legacy_dependencies_schema() {
+     // Valid legacy specs accept required model dependencies and conditional bundled dependencies.
+     const auto spec = json::parse(schema_v1_spec_text(R"JSON([
+@@ -1679,6 +1697,7 @@ int main() {
+     try {
+         test_legacy_dependencies_schema();
+         test_download_kinds_schema();
++        test_package_precision_is_open_vocabulary();
+         test_typed_schema_renamed_dependencies();
+         test_dependency_option_mapping_from_production_spec();
+         test_options_schema();
 diff --git a/src/community_models/fish_drama3/hybrid_decode.inc b/src/community_models/fish_drama3/hybrid_decode.inc
 new file mode 100644
 --- /dev/null
