@@ -51,9 +51,10 @@ class NativeFailure(RuntimeError):
 
 def allocation_failure(message):
     return any(s in str(message).lower() for s in (
-        "out of memory", "out-of-memory", "bad_alloc", "cudamemoryallocation",
-        "failed to allocate", "allocation failed", "cudahostalloc failed",
-        "cannot allocate", "cannot reserve", "cuda error 2",
+        "out of memory", "out-of-memory", "bad_alloc", "bad allocation",
+        "cudamemoryallocation", "failed to allocate", "allocation failed",
+        "cudahostalloc failed", "cannot allocate", "cannot reserve", "cuda error 2",
+        "ggml_assert", "mem_buffer",
     ))
 
 
@@ -316,7 +317,10 @@ class GGUFEngine:
                     details = str(exc) + "\n" + self._log_tail()
                     self.attempts.append({"plan": plan.report(), "loaded": False, "error": details[-3000:]})
                     self.close()
-                    if index + 1 == len(candidates) or not allocation_failure(details):
+                    # A worker that dies while loading has almost always run out of
+                    # memory somewhere; step down to the next, smaller plan.
+                    crashed = "native worker exited" in details.lower()
+                    if index + 1 == len(candidates) or not (crashed or allocation_failure(details)):
                         raise
                     self._event(message="Allocation failed; retrying with a smaller resource plan")
 
@@ -717,7 +721,11 @@ class GGUFEngine:
                     process.kill()
                     process.wait(timeout=10)
                 if process.stdin:
-                    process.stdin.close()
+                    try:
+                        process.stdin.close()
+                    except OSError:
+                        # A worker that died during allocation may already have closed the pipe.
+                        pass
                 if self._reader:
                     self._reader.join(timeout=2)
                 if process.stdout:
