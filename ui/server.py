@@ -49,6 +49,7 @@ for key, folder in (
     os.environ.setdefault(key, str(target))
 
 from drama_low_vram.autotune import inspect_hardware  # noqa: E402
+from drama_low_vram.audio_import import is_video, prepare_reference_audio  # noqa: E402
 from drama_low_vram.audio_stream import AudioStreamSession  # noqa: E402
 from drama_low_vram.engine import DramaEngine, EngineOptions  # noqa: E402
 from drama_low_vram.model_installation import (  # noqa: E402
@@ -1700,12 +1701,10 @@ class AppState:
         VoiceReference("uploaded", str(transcript), int(speaker)).transcript()
         if not str(name).strip():
             raise ValueError("Voice name must not be empty")
+        data, suffix = prepare_reference_audio(data, filename, ROOT)
         voice_id = f"{uuid.uuid4().hex[:10]}-{_safe_name(name, 'voice')}"
         folder = self.voices_root / voice_id
         folder.mkdir(parents=True)
-        suffix = Path(filename).suffix.lower()
-        if suffix not in (".wav", ".flac", ".mp3", ".ogg", ".m4a"):
-            suffix = ".wav"
         audio_name = f"reference{suffix}"
         (folder / audio_name).write_bytes(data)
         metadata = {
@@ -1721,11 +1720,14 @@ class AppState:
 
     def add_reference_upload(self, filename: str, data: bytes):
         """Store an uploaded reference without creating a voice-library entry."""
-        suffix = Path(filename).suffix.lower()
-        if suffix not in (".wav", ".flac", ".mp3", ".ogg", ".m4a"):
-            raise ValueError("Choose a WAV, MP3, FLAC, OGG or M4A reference")
-        if not 32 <= len(data) <= 128 * 1024**2:
-            raise ValueError("Reference audio must be nonempty and no larger than 128 MiB")
+        video = is_video(filename)
+        limit = 512 * 1024**2 if video else 128 * 1024**2
+        if len(data) < 32:
+            raise ValueError("Audio file is empty")
+        if len(data) > limit:
+            raise ValueError("Video file must be no larger than 512 MiB" if video
+                             else "Reference audio must be nonempty and no larger than 128 MiB")
+        data, suffix = prepare_reference_audio(data, filename, ROOT)
         upload_id = uuid.uuid4().hex
         folder = self.uploads_root / upload_id
         folder.mkdir()
@@ -2696,9 +2698,9 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, status, value):
         self._send(status, _json_bytes(value))
 
-    def _body(self):
+    def _body(self, limit=128 * 1024**2):
         length = int(self.headers.get("Content-Length", "0"))
-        if length > 128 * 1024**2:
+        if length > limit:
             raise ValueError("Request body is too large")
         return self.rfile.read(length)
 
@@ -2708,9 +2710,9 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(raw.decode("utf-8"))
 
-    def _multipart_payload(self):
+    def _multipart_payload(self, limit=128 * 1024**2):
         content_type = self.headers.get("Content-Type", "")
-        raw = self._body()
+        raw = self._body(limit)
         envelope = (
             f"Content-Type: {content_type}\r\n"
             "MIME-Version: 1.0\r\n\r\n"
@@ -2865,7 +2867,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/reference-prewarm/cancel":
                 return self._json(202, STATE.cancel_reference_prewarm(self._payload().get("id")))
             if path == "/api/reference-audio":
-                form = self._multipart_payload()
+                form = self._multipart_payload(limit=512 * 1024**2 + 1024**2)
                 audio = form["audio"]
                 if not isinstance(audio, dict):
                     raise ValueError("An audio file is required")
@@ -2957,7 +2959,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/voices":
                 content_type = self.headers.get("Content-Type", "")
                 if content_type.startswith("multipart/form-data"):
-                    form = self._multipart_payload()
+                    form = self._multipart_payload(limit=512 * 1024**2 + 1024**2)
                     name = form.get("name", "Untitled voice")
                     transcript = form.get("transcript", "")
                     speaker = int(form.get("speaker", "0"))

@@ -981,12 +981,14 @@ function showMissingClone(upload, transcript) {
 }
 function selectCloneAudio(file, { auto = true, upload = null, original = null } = {}) {
   if (!file) return;
-  if (!/\.(wav|mp3|flac|ogg|m4a)$/i.test(file.name)) {
-    $('clone-note').textContent = t('Choose a WAV, MP3, FLAC, OGG or M4A reference');
+  const video = /\.(mp4|m4v|mov|webm|mkv|avi|wmv|flv|ts|mpg|mpeg|3gp)$/i.test(file.name);
+  if (!video && !/\.(wav|mp3|flac|ogg|m4a)$/i.test(file.name)) {
+    $('clone-note').textContent = t('Choose a WAV, MP3, FLAC, OGG, M4A or MP4 reference');
     return false;
   }
-  if (file.size < 32 || file.size > 128 * 1024 ** 2) {
-    $('clone-note').textContent = t('Reference audio must be nonempty and no larger than 128 MiB');
+  if (file.size < 32 || file.size > (video ? 512 : 128) * 1024 ** 2) {
+    $('clone-note').textContent = t(video ? 'Video file must be no larger than 512 MiB.'
+      : 'Reference audio must be nonempty and no larger than 128 MiB');
     return false;
   }
   cancelReferencePrewarm();
@@ -1859,7 +1861,7 @@ for (const type of ['drop', 'dragleave']) uploadZone.addEventListener(type, even
 uploadZone.addEventListener('drop', event => {
   const file = event.dataTransfer.files[0];
   if (!file) return;
-  if (!file.type.startsWith('audio/') && !/\.(wav|mp3|flac|ogg|m4a)$/i.test(file.name)) {
+  if (!file.type.startsWith('audio/') && !/\.(wav|mp3|flac|ogg|m4a|mp4|m4v|mov|webm)$/i.test(file.name)) {
     $('voice-form-note').dataset.i18n = 'Choose an audio file.';
     $('voice-form-note').textContent = t('Choose an audio file.');
     return;

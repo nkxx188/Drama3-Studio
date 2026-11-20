@@ -95,10 +95,10 @@
             <div class="voice-section clone-section" id="clone-section">
               <div class="transcription-heading reference-heading"><label class="field-label" for="clone-audio" data-i18n="Reference audio">Reference audio</label></div>
               <label class="upload-zone clone-upload-zone" id="clone-upload-zone" for="clone-audio">
-                <input id="clone-audio" class="file-input" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a,audio/*">
+                <input id="clone-audio" class="file-input" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a,.mp4,.mov,.m4v,.webm,audio/*,video/mp4,video/quicktime,video/webm">
                 <span class="upload-icon"><svg class="icon"><use href="#i-upload"/></svg></span>
                 <b data-i18n="Upload audio to clone a voice">Upload audio to clone a voice</b>
-                <span data-i18n="WAV, MP3, FLAC, OGG or M4A">WAV, MP3, FLAC, OGG or M4A</span>
+                <span data-i18n="WAV, MP3, FLAC, OGG, M4A or MP4">WAV, MP3, FLAC, OGG, M4A or MP4</span>
               </label>
               <details id="clone-upload-preview" class="upload-preview reference-material hidden" open>
                 <summary class="reference-compact-heading"><span class="reference-compact-copy"><strong id="clone-file-name"></strong><span id="clone-summary-transcript" class="reference-compact-transcript"></span></span><span id="clone-summary-duration" class="field-help"></span><button id="clone-summary-play" type="button" class="reference-compact-play icon-btn" aria-label="Preview voice" data-i18n-aria-label="Preview voice"></button><button id="clone-summary-remove" type="button" class="selected-voice-clear icon-btn" title="Remove audio" data-i18n-title="Remove audio" aria-label="Remove audio" data-i18n-aria-label="Remove audio"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></summary>
@@ -164,14 +164,14 @@
             <h2 data-i18n="Source audio">Source audio</h2>
             <button id="audio-import-choose" class="secondary-btn audio-import-change" type="button"><svg class="icon"><use href="#i-upload"/></svg><span data-i18n="Upload audio">Upload audio</span></button>
           </div>
-          <input id="audio-import-file" class="sr-only" type="file" tabindex="-1" accept=".wav,.mp3,.flac,.ogg,.m4a,audio/wav,audio/mpeg,audio/flac,audio/ogg,audio/mp4">
+          <input id="audio-import-file" class="sr-only" type="file" tabindex="-1" accept=".wav,.mp3,.flac,.ogg,.m4a,.mp4,.mov,.m4v,.webm,audio/wav,audio/mpeg,audio/flac,audio/ogg,audio/mp4,video/mp4,video/quicktime,video/webm">
           <div class="audio-edit-columns">
             <div class="audio-edit-inputs audio-edit-body">
               <section class="audio-edit-source">
                 <label class="upload-zone" id="audio-import-dropzone" for="audio-import-file">
                   <span class="upload-icon"><svg class="icon"><use href="#i-upload"/></svg></span>
                   <b data-i18n="Choose an audio file or drop it here">Choose an audio file or drop it here</b>
-                  <span data-i18n="WAV, MP3, FLAC, OGG or M4A · Up to 120 seconds">WAV, MP3, FLAC, OGG or M4A · Up to 120 seconds</span>
+                  <span data-i18n="WAV, MP3, FLAC, OGG, M4A or MP4 · Up to 120 seconds">WAV, MP3, FLAC, OGG, M4A or MP4 · Up to 120 seconds</span>
                 </label>
                 <div id="audio-import-preview" class="hidden">
                   <div class="audio-import-file-heading"><strong id="audio-import-filename"></strong><button id="audio-import-remove" class="text-btn" type="button" data-i18n="Remove audio">Remove audio</button></div>
@@ -363,7 +363,7 @@
       <label class="field-label" for="voice-name" data-i18n="Name">Name</label><input class="input" id="voice-name" required autofocus placeholder="Morgan — calm" data-i18n-placeholder="Morgan — calm">
       <label class="field-label" for="voice-transcript" data-i18n="Transcript">Transcript</label><textarea class="compact-input" id="voice-transcript" required placeholder="The exact words spoken in the reference audio." data-i18n-placeholder="The exact words spoken in the reference audio."></textarea>
       <div class="voice-upload-heading"><label class="field-label" for="voice-audio" data-i18n="Audio file / record">Audio file / record</label><div class="speaker-field"><label for="voice-speaker" data-i18n="Speaker ID">Speaker ID</label><input class="input" id="voice-speaker" type="number" min="0" max="15" value="0"></div></div>
-      <label class="upload-zone" id="voice-upload-zone" for="voice-audio"><input id="voice-audio" class="file-input" type="file" accept="audio/*" capture="microphone" required><span class="upload-icon"><svg class="icon"><use href="#i-upload"/></svg></span><b data-i18n="Choose audio or drop it here">Choose audio or drop it here</b><span data-i18n="WAV, MP3, FLAC, OGG or M4A">WAV, MP3, FLAC, OGG or M4A</span></label>
+      <label class="upload-zone" id="voice-upload-zone" for="voice-audio"><input id="voice-audio" class="file-input" type="file" accept="audio/*,video/mp4,video/quicktime,video/webm" capture="microphone" required><span class="upload-icon"><svg class="icon"><use href="#i-upload"/></svg></span><b data-i18n="Choose audio or drop it here">Choose audio or drop it here</b><span data-i18n="WAV, MP3, FLAC, OGG, M4A or MP4">WAV, MP3, FLAC, OGG, M4A or MP4</span></label>
       <div id="voice-upload-preview" class="upload-preview hidden"><span id="voice-file-name"></span><audio id="voice-file-audio" controls preload="metadata"></audio></div>
       <div class="compose-footer studio-dialog-footer"><div class="form-note" id="voice-form-note" role="status" aria-live="polite"></div><button class="primary-btn" type="submit" id="save-voice"><span data-i18n="Save voice">Save voice</span><svg class="icon"><use href="#i-check"/></svg></button></div>
     </form>

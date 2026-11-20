@@ -49,11 +49,13 @@
       groupReferences: bundle ? clips.slice(1).map((_clip, offset) => forVoice(voiceId, offset + 1, false)) : [] };
   }
   async function uploadFile(file) {
-    if (!/\.(wav|mp3|flac|ogg|m4a)$/i.test(file.name)) {
-      throw new Error(t('Choose a WAV, MP3, FLAC, OGG or M4A reference'));
+    const video = /\.(mp4|m4v|mov|webm|mkv|avi|wmv|flv|ts|mpg|mpeg|3gp)$/i.test(file.name);
+    if (!video && !/\.(wav|mp3|flac|ogg|m4a)$/i.test(file.name)) {
+      throw new Error(t('Choose a WAV, MP3, FLAC, OGG, M4A or MP4 reference'));
     }
-    if (file.size < 32 || file.size > 128 * 1024 ** 2) {
-      throw new Error(t('Reference audio must be nonempty and no larger than 128 MiB'));
+    if (file.size < 32 || file.size > (video ? 512 : 128) * 1024 ** 2) {
+      throw new Error(t(video ? 'Video file must be no larger than 512 MiB.'
+        : 'Reference audio must be nonempty and no larger than 128 MiB'));
     }
     const body = new FormData(); body.append('audio', file);
     const response = await fetch('/api/reference-audio', { method: 'POST', body });

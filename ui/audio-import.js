@@ -220,7 +220,11 @@
     const token = ++request;
     asrBusy = false; uploading = true; failure = ''; asrStatus = ''; render();
     try {
-      if (file.size > 127 * 1024 ** 2) throw new Error('Audio file must be no larger than 127 MiB.');
+      const video = /\.(mp4|m4v|mov|webm|mkv|avi|wmv|flv|ts|mpg|mpeg|3gp)$/i.test(file.name);
+      if (file.size > (video ? 512 : 127) * 1024 ** 2) {
+        throw new Error(video ? 'Video file must be no larger than 512 MiB.'
+          : 'Audio file must be no larger than 127 MiB.');
+      }
       const form = new FormData(); form.append('audio', file, file.name);
       const response = await fetch('/api/reference-audio', { method: 'POST', body: form });
       const uploaded = await response.json();
