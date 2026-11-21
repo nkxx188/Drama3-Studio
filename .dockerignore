@@ -1,0 +1,10 @@
+.git
+.github
+.cache
+checkpoints
+ui_data
+diagnostics
+outputs
+dist
+**/__pycache__
+*.pyc

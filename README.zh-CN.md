@@ -92,6 +92,8 @@ GitHub 仓库提供程序源码、前端资源、依赖版本、上游补丁及�
 
 源码运行与打包步骤见 [开发与构建](docs/development.md)。仅下载 GitHub 的 Source code ZIP 并不能直接获得完整的一键包。
 
+Linux 宿主可用容器运行同一份源码、同一个原生 worker，见 [Linux 与 Docker 部署](docs/linux-docker.md)。
+
 ## 项目与作者
 
 作者：**那颗星星188**。如果这个工具对你有帮助，欢迎关注，了解后续更新。

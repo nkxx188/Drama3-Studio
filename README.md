@@ -92,6 +92,8 @@ The repository contains application source, frontend assets, dependency versions
 
 See the [development and build guide (Chinese)](docs/development.md) for source setup and packaging instructions. GitHub's **Source code** ZIP is not the complete, ready-to-run portable package.
 
+Linux hosts run the same sources, with the same worker, inside a container: see the [Linux and Docker guide (Chinese)](docs/linux-docker.md).
+
 ## Project and Author
 
 Created by **nkxx188 / 那颗星星188**. If you find Studio useful, follow the author for updates.
