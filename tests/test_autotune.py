@@ -374,7 +374,7 @@ class AutotuneTests(unittest.TestCase):
         )
         with (
             patch("drama_low_vram.autotune.os.name", "nt"),
-            patch("drama_low_vram.autotune.ctypes.windll", win_api, create=True),
+            patch("drama_low_vram.memory_status.ctypes.windll", win_api, create=True),
         ):
             physical, available, _, _, notes, commit_limit, commit_available = _read_memory_status()
         self.assertEqual(physical, 48 * GIB)

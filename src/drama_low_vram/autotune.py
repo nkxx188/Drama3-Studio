@@ -21,7 +21,6 @@ fallback so that the policy can be unit-tested and inspected elsewhere.
 
 from __future__ import annotations
 
-import ctypes
 import importlib.util
 import json
 import os
@@ -38,6 +37,7 @@ from .host_budget import (
     estimate_host_requirements,
     plan_host_memory,
 )
+from .memory_status import read_windows_memory_status
 
 try:  # Torch is part of the runtime, but keeping import optional helps tooling.
     import torch
@@ -395,44 +395,19 @@ def _read_memory_status() -> tuple[
 
     notes: list[str] = []
     if os.name == "nt":
-        try:
-            from ctypes import wintypes
-
-            class _MemoryStatusEx(ctypes.Structure):
-                _fields_ = [
-                    ("dwLength", wintypes.DWORD),
-                    ("dwMemoryLoad", wintypes.DWORD),
-                    ("ullTotalPhys", wintypes.ULARGE_INTEGER),
-                    ("ullAvailPhys", wintypes.ULARGE_INTEGER),
-                    ("ullTotalPageFile", wintypes.ULARGE_INTEGER),
-                    ("ullAvailPageFile", wintypes.ULARGE_INTEGER),
-                    ("ullTotalVirtual", wintypes.ULARGE_INTEGER),
-                    ("ullAvailVirtual", wintypes.ULARGE_INTEGER),
-                    ("ullAvailExtendedVirtual", wintypes.ULARGE_INTEGER),
-                ]
-
-            status = _MemoryStatusEx()
-            status.dwLength = ctypes.sizeof(_MemoryStatusEx)
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                total_phys = int(status.ullTotalPhys)
-                available_phys = int(status.ullAvailPhys)
-                # MEMORYSTATUSEX pagefile fields are commit capacity. The
-                # derived legacy fields are estimates, not pagefile disk space.
-                commit_limit = int(status.ullTotalPageFile)
-                commit_available = int(status.ullAvailPageFile)
-                page_total = max(0, commit_limit - total_phys)
-                page_available = max(0, commit_available - available_phys)
-                return (
-                    total_phys,
-                    available_phys,
-                    page_total,
-                    page_available,
-                    tuple(notes),
-                    commit_limit,
-                    commit_available,
-                )
-        except Exception as exc:  # pragma: no cover - depends on host API
-            notes.append(f"Windows memory query failed: {type(exc).__name__}")
+        status = read_windows_memory_status()
+        if status is not None:
+            # Legacy swap fields are derived estimates, not pagefile disk space.
+            return (
+                status.ram_total_bytes,
+                status.ram_available_bytes,
+                max(0, status.commit_limit_bytes - status.ram_total_bytes),
+                max(0, status.commit_available_bytes - status.ram_available_bytes),
+                tuple(notes),
+                status.commit_limit_bytes,
+                status.commit_available_bytes,
+            )
+        notes.append("Windows memory query failed")
 
     # Portable fallback for Linux and test environments.
     try:

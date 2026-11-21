@@ -173,6 +173,7 @@ class Plan:
     prefill_cache_mib: int = 256
     prefill_work_width: int = 8
     prefill_workspace_bytes: int = 0
+    commit_available_bytes: int | None = None
 
     def report(self):
         return asdict(self) | {
@@ -219,7 +220,7 @@ class Plan:
 
 
 def plan_resources(layout, *, free_vram, available_ram, cores, context=1024, storage="auto", cache=None,
-                   decoder="auto"):
+                   decoder="auto", commit_available=None):
     if free_vram <= 0 or available_ram <= 0:
         raise ValueError("Cannot plan without an available GPU/RAM memory snapshot")
     if context < 256 or context > 8192:
@@ -271,9 +272,13 @@ def plan_resources(layout, *, free_vram, available_ram, cores, context=1024, sto
     # Pinning copies expert banks. The load also briefly materializes dense
     # sources and a full head. Page-cache source pages remain reclaimable.
     host_peak = layout.expert_bytes + layout.dense_bytes + layout.codec_bytes + 512 * MIB
-    pinned = storage == "pin" or (storage == "auto" and available_ram >= host_peak)
+    commit_fits = commit_available is None or commit_available >= host_peak
+    pinned = storage == "pin" or (storage == "auto" and available_ram >= host_peak and commit_fits)
     notes = ["Full top-8 GPU expert compute; mapped source may page to SSD under RAM pressure.",
              "Memory totals are estimates; failed allocations use bounded fallbacks."]
+    if storage == "auto" and not commit_fits:
+        notes.append(f"Windows commit headroom {commit_available / GIB:.2f} GiB is below the "
+                     f"pinned load estimate {host_peak / GIB:.2f} GiB; use mapped experts.")
     if chosen_decoder == "cuda":
         notes.append("Leave an additional 512 MiB of headroom for CUDA waveform decoding.")
     if prefill_workspace:
@@ -296,4 +301,4 @@ def plan_resources(layout, *, free_vram, available_ram, cores, context=1024, sto
                 "stream" if chosen_decoder == "cuda" else "full",
                 context, max(1, min(8, cores or 1)), resident + slots * layout.slot_bytes,
                 workspace, host_peak, tuple(notes), prefill_cache,
-                int(prefill_width), int(prefill_workspace))
+                int(prefill_width), int(prefill_workspace), commit_available_bytes=commit_available)

@@ -7,8 +7,9 @@ leave the worker alive; execution failures close it before any retry.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from collections import OrderedDict
+from contextlib import suppress
+from dataclasses import replace
 import json
 import hashlib
 import os
@@ -26,6 +27,7 @@ import psutil
 from .sampling import DEFAULT_TOP_K
 
 from .gguf_resources import Layout, plan_resources
+from .memory_status import read_windows_memory_status
 from .runtime_files import load_native_runtime
 from .nvidia_policy import policy_for
 
@@ -50,11 +52,12 @@ class NativeFailure(RuntimeError):
 
 
 def allocation_failure(message):
-    return any(s in str(message).lower() for s in (
-        "out of memory", "out-of-memory", "bad_alloc", "cudamemoryallocation",
+    text = str(message).lower()
+    return any(s in text for s in (
+        "out of memory", "out-of-memory", "bad_alloc", "bad allocation", "cudamemoryallocation",
         "failed to allocate", "allocation failed", "cudahostalloc failed",
-        "cannot allocate", "cannot reserve", "cuda error 2",
-    ))
+        "cannot allocate", "cannot reserve", "ggml_assert(ctx->mem_buffer != null) failed",
+    )) or re.search(r"\bcuda error 2\b", text) is not None
 
 
 def build_environment(build, root=ROOT):
@@ -208,6 +211,9 @@ class GGUFEngine:
             except queue.Empty:
                 continue
             if message["event"] == "exit":
+                # Stdout can close just before the worker finishes writing stderr.
+                with suppress(subprocess.TimeoutExpired):
+                    self._process.wait(timeout=1)
                 raise NativeFailure("Native worker exited: " + self._log_tail())
             if request_id is not None and message.get("id") != request_id:
                 raise NativeFailure("Native request identity mismatch")
@@ -258,9 +264,12 @@ class GGUFEngine:
                     self.hardware_policy = policy_for((chosen["major"], chosen["minor"]))
                     if self.pipeline_width and not self.hardware_policy.experimental_pipeline:
                         raise ValueError("Experimental GPU pipeline is currently validated only for SM89; use default decoding")
+                layout = Layout.read(self.model_path)
+                host = read_windows_memory_status()
                 self.plan = plan_resources(
-                    Layout.read(self.model_path), free_vram=memory["free_bytes"],
-                    available_ram=psutil.virtual_memory().available,
+                    layout, free_vram=memory["free_bytes"],
+                    available_ram=host.ram_available_bytes if host is not None else psutil.virtual_memory().available,
+                    commit_available=host.commit_available_bytes if host is not None else None,
                     cores=psutil.cpu_count(logical=False), context=self.context,
                     storage=self.storage, cache=self.cache, decoder=self.decoder)
             self._reuse_fallback = False
@@ -313,9 +322,9 @@ class GGUFEngine:
                     self.attempts.append({"plan": plan.report(), "loaded": True})
                     return
                 except NativeFailure as exc:
+                    self.close()
                     details = str(exc) + "\n" + self._log_tail()
                     self.attempts.append({"plan": plan.report(), "loaded": False, "error": details[-3000:]})
-                    self.close()
                     if index + 1 == len(candidates) or not allocation_failure(details):
                         raise
                     self._event(message="Allocation failed; retrying with a smaller resource plan")
@@ -666,8 +675,8 @@ class GGUFEngine:
                                         context_resizes.append(self._grow_context(capacity, cancelled))
                                         continue
                                     except (NativeFailure, BrokenPipeError, OSError) as resize_error:
-                                        details = str(resize_error) + "\n" + self._log_tail()
                                         self.close()
+                                        details = str(resize_error) + "\n" + self._log_tail()
                                         if not allocation_failure(details):
                                             raise
                                         self._event(message="Context allocation failed; retrying a fresh resource plan")
@@ -679,9 +688,9 @@ class GGUFEngine:
                                 reused = False
                                 continue
                         raise
+                    self.close()
                     details = str(exc) + "\n" + self._log_tail()
                     candidates = list(self.plan.fallbacks()) if allocation_failure(details) else []
-                    self.close()
                     if not candidates or retry + 1 >= attempt_limit:
                         raise
                     # A failed in-flight request is retried from a fresh seed
@@ -717,7 +726,9 @@ class GGUFEngine:
                     process.kill()
                     process.wait(timeout=10)
                 if process.stdin:
-                    process.stdin.close()
+                    # Windows may report a broken pipe while closing a dead worker's stdin.
+                    with suppress(OSError):
+                        process.stdin.close()
                 if self._reader:
                     self._reader.join(timeout=2)
                 if process.stdout:

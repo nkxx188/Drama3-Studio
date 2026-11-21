@@ -6,11 +6,13 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from unittest.mock import Mock
 
 import pytest
 
 import drama_low_vram.gguf_runtime as runtime
 from drama_low_vram.gguf_resources import Layout, GIB, MIB, plan_resources
+from drama_low_vram.memory_status import WindowsMemoryStatus
 
 
 @pytest.fixture
@@ -28,6 +30,12 @@ import sys,json,time,os,wave
 from pathlib import Path
 config=json.loads(Path(sys.argv[1]).read_text())
 def emit(value): print("@drama3 "+json.dumps(value),flush=True)
+load_error=os.environ.get("DRAMA_TEST_PINNED_LOAD_ERROR")
+if load_error and config["options"]["fish_drama3.pin_experts"]=="true":
+ os.close(sys.stdout.fileno())
+ time.sleep(0.05)
+ print(load_error,file=sys.stderr,flush=True)
+ sys.exit(1)
 emit({"event":"ready","load_seconds":0.001,"protocol":int(os.environ.get("DRAMA_TEST_PROTOCOL","1")),
       "context_resize":os.environ.get("DRAMA_TEST_CONTEXT_RESIZE")=="1"})
 for line in sys.stdin:
@@ -156,6 +164,72 @@ def test_allocation_fallback_reaps_failed_child_before_restart(engine, tmp_path,
     engine.load()
     assert engine.plan.cache_experts == 8
     assert len(engine.attempts) == 2
+
+
+def test_cold_load_uses_commit_headroom_without_replanning_resident_worker(engine, monkeypatch):
+    layout = engine.plan.layout
+    engine.plan = None
+    engine._provided_plan = False
+    monkeypatch.setattr(runtime.Layout, "read", lambda _: layout)
+    monkeypatch.setattr(runtime, "native_memory", lambda *_: {"free_bytes": 16 * GIB})
+    host = Mock(return_value=WindowsMemoryStatus(64 * GIB, 48 * GIB, 80 * GIB, 30 * GIB))
+    monkeypatch.setattr(runtime, "read_windows_memory_status", host)
+
+    engine.load()
+    process = engine._process
+    assert engine.plan.host_storage == "mapped" and engine.plan.decoder_backend == "cuda"
+    assert engine.plan.commit_available_bytes == 30 * GIB
+    assert len(engine.attempts) == 1
+    engine.load()
+    assert engine._process is process
+    host.assert_called_once_with()
+
+
+@pytest.mark.parametrize("message", [
+    "std::bad allocation",
+    "ggml.c:1685: GGML_ASSERT(ctx->mem_buffer != NULL) failed",
+])
+def test_pinned_load_retries_confirmed_allocation_failure_after_pipe_closes(engine, monkeypatch, message):
+    engine.plan = plan_resources(engine.plan.layout, free_vram=16 * GIB,
+                                 available_ram=48 * GIB, cores=4)
+    original_plan = engine.plan
+    monkeypatch.setenv("DRAMA_TEST_PINNED_LOAD_ERROR", message)
+    popen = runtime.subprocess.Popen
+    processes = []
+
+    def track_worker(command, **kwargs):
+        if processes:
+            assert processes[0].poll() is not None
+        process = popen(command, **kwargs)
+        if not processes:
+            close_stdin = process.stdin.close
+
+            def close_broken_pipe():
+                close_stdin()
+                raise OSError(22, "Invalid argument")
+
+            process.stdin.close = close_broken_pipe
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", track_worker)
+    engine.load()
+    assert [attempt["loaded"] for attempt in engine.attempts] == [False, True]
+    assert message in engine.attempts[0]["error"]
+    assert engine.plan.host_storage == "mapped"
+    assert engine.plan.cache_experts == original_plan.cache_experts
+    assert engine.plan.decoder_backend == original_plan.decoder_backend == "cuda"
+
+
+def test_unrelated_load_exit_keeps_the_original_error_and_does_not_retry(engine, monkeypatch):
+    engine.plan = replace(engine.plan, host_storage="pin")
+    monkeypatch.setenv("DRAMA_TEST_PINNED_LOAD_ERROR", "GGML_ASSERT(ctx->mem_buffer_size == n) failed")
+
+    with pytest.raises(runtime.NativeFailure, match="mem_buffer_size"):
+        engine.load()
+
+    assert len(engine.attempts) == 1
+    assert not engine.loaded
 
 
 def test_reference_conversion_uses_content_identity_and_reuses_cached_wav(tmp_path):

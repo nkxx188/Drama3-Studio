@@ -23,6 +23,33 @@ def test_available_memory_is_not_reduced_by_system_usage_again():
     assert "fish_drama3.decode_cpu_experts" not in plan.session_options()
 
 
+@pytest.mark.parametrize("ram_gib,commit_gib,storage", [
+    (44, None, "pin"),
+    (44, 48, "pin"),
+    (44, 36, "mapped"),
+    (44, 0, "mapped"),
+    (24, 48, "mapped"),
+])
+def test_auto_storage_requires_physical_ram_and_known_commit_headroom(ram_gib, commit_gib, storage):
+    options = dict(free_vram=16 * GIB, available_ram=ram_gib * GIB, cores=8)
+    commit = None if commit_gib is None else commit_gib * GIB
+    baseline = plan_resources(layout(), **options)
+    plan = plan_resources(layout(), **options, commit_available=commit)
+    assert plan.host_storage == storage
+    assert plan.report()["commit_available_bytes"] == commit
+    assert plan.session_options() == baseline.session_options() | {
+        "fish_drama3.pin_experts": str(storage == "pin").lower(),
+    }
+    assert plan.prefill_work_width == baseline.prefill_work_width
+
+
+@pytest.mark.parametrize("storage", ["pin", "mapped"])
+def test_explicit_storage_keeps_the_requested_first_attempt(storage):
+    plan = plan_resources(layout(), free_vram=16 * GIB, available_ram=44 * GIB,
+                          cores=8, storage=storage, commit_available=0)
+    assert plan.host_storage == storage
+
+
 def test_budgets_follow_model_size_and_gpu_capacity():
     low = plan_resources(layout(), free_vram=int(7.5 * GIB), available_ram=24 * GIB, cores=2)
     high = plan_resources(layout(), free_vram=24 * GIB, available_ram=48 * GIB, cores=32)
