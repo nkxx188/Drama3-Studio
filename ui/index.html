@@ -1,6 +1,32 @@
 <!doctype html>
 <html lang="zh-CN" class="compact-studio" data-view="generate" data-startup="loading">
 <head>
+  <!-- crypto.randomUUID() is only exposed in a secure context. Serving Studio on
+       a LAN address over plain http (the normal case for a container or a second
+       machine) leaves it undefined, and the workspace fails to open with
+       "crypto.randomUUID is not a function". Fall back to getRandomValues(),
+       which is available on insecure origins and is still a CSPRNG. -->
+  <script>
+    (function () {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') return;
+      var v4 = function () {
+        var b = new Uint8Array(16);
+        window.crypto.getRandomValues(b);
+        b[6] = (b[6] & 0x0f) | 0x40;   // version 4
+        b[8] = (b[8] & 0x3f) | 0x80;   // variant 10xx
+        var h = '';
+        for (var i = 0; i < 16; i++) h += (b[i] + 0x100).toString(16).slice(1);
+        return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) +
+               '-' + h.slice(16, 20) + '-' + h.slice(20);
+      };
+      try {
+        Object.defineProperty(window.crypto, 'randomUUID',
+          { value: v4, configurable: true, writable: true });
+      } catch (e) {
+        try { window.Crypto.prototype.randomUUID = v4; } catch (e2) { /* give up */ }
+      }
+    })();
+  </script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">

@@ -1,6 +1,6 @@
 # 开发与构建
 
-本页面向需要修改源码或重新构建一键包的开发者。普通使用者请使用完整的 Windows NVIDIA 一键包。
+本页面向需要修改源码或重新构建一键包的开发者。普通使用者请使用完整的 Windows NVIDIA 一键包。Linux 宿主的容器部署见 [Linux 与 Docker](linux-docker.md)。
 
 ## 目录
 

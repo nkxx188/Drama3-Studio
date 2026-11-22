@@ -56,6 +56,7 @@ node_modules/
 /docs/*
 !/docs/development.md
 !/docs/release-preparation.md
+!/docs/linux-docker.md
 /tools/benchmark_comfy_models.py
 /tools/collect_comfy_comparisons.py
 /tools/download_phase19_models.py

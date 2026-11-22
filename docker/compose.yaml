@@ -1,0 +1,59 @@
+# Drama 3 Studio on Linux, GPU reserved through the NVIDIA container toolkit.
+#
+#   python tools/prepare_sources.py
+#   python tools/build_linux_runtime.py
+#   docker compose -f docker/compose.yaml up -d --build
+#
+# Requires the NVIDIA driver and nvidia-container-toolkit on the host. Models stay
+# outside the image; point `checkpoints` at a directory containing the .gguf files.
+
+services:
+  drama3-studio:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: drama3-studio:linux
+    container_name: drama3-studio
+    restart: unless-stopped
+
+    ports:
+      - "8879:8879"
+
+    environment:
+      DRAMA_HOST: "0.0.0.0"
+      DRAMA_PORT: "8879"
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+      # Reduces allocator fragmentation when another GPU workload shares the card.
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+    volumes:
+      # Model files. Mounted read-only so a UI mishap cannot delete weights.
+      - ../checkpoints:/app/checkpoints:ro
+      # Application state: jobs, uploads, voices, transcripts, settings.json.
+      - ../ui_data:/app/ui_data
+      - ../diagnostics:/app/diagnostics
+
+    # The GGUF worker keeps large pinned buffers; below 2 GB the allocation fails.
+    shm_size: 4g
+
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:8879/api/instance"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
+      retries: 3
+
+    stop_grace_period: 30s
