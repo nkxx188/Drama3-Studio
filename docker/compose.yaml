@@ -28,8 +28,8 @@ services:
       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
 
     volumes:
-      # Model files. Mounted read-only so a UI mishap cannot delete weights.
-      - ../checkpoints:/app/checkpoints:ro
+      # Keep downloaded and manually installed models on the host.
+      - ../checkpoints:/app/checkpoints:rw
       # Application state: jobs, uploads, voices, transcripts, settings.json.
       - ../ui_data:/app/ui_data
       - ../diagnostics:/app/diagnostics

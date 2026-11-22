@@ -37,7 +37,7 @@ fi
 
 if [ -z "$(find "$ROOT/checkpoints" -maxdepth 2 -name '*.gguf' -print -quit 2>/dev/null)" ]; then
     echo "[drama3] note: no .gguf model found under checkpoints." >&2
-    echo "[drama3]       mount a model directory, or point Settings at an existing folder." >&2
+    echo "[drama3]       Download a model in Settings or copy a .gguf file into the mounted checkpoints directory." >&2
 fi
 
 echo "[drama3] listening on http://${HOST}:${PORT}/  (reach it from the host as <server-ip>:${PORT})"

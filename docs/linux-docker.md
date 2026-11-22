@@ -20,12 +20,11 @@ Windows 一键包仍是首选路径。本页给出在 Linux 上用容器运行�
 - Linux x86_64 宿主机，已装 NVIDIA 驱动与 `nvidia-container-toolkit`
 - Docker 与 Docker Compose v2
 - 编译 worker 需要：C++17 编译器、CMake、Ninja、CUDA Toolkit 12.8 或 12.9（仅构建机需要，运行镜像不含 SDK）
-- 模型文件：`.gguf` 放在 `checkpoints/`，或启动后在设置里添加目录
 
 ## 三步
 
 ```bash
-git clone https://github.com/nkxx188/Drama3-Studio.git
+git clone --branch linux-preview https://github.com/nkxx188/Drama3-Studio.git
 cd Drama3-Studio
 
 # 1. 还原固定提交的 Fish Speech，并应用仓库内校验过的补丁
@@ -35,6 +34,7 @@ python tools/prepare_sources.py
 python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda --jobs 6
 
 # 3. 构建镜像并启动
+mkdir -p checkpoints
 docker compose -f docker/compose.yaml up -d --build
 ```
 
@@ -42,11 +42,17 @@ docker compose -f docker/compose.yaml up -d --build
 
 `--architectures` 决定编译哪些 SM 目标，默认 `89`（RTX 40 系 / Ada）。需要覆盖多代显卡时按 CMake 语法传入，例如 `--architectures "75;86;89;120"`；目标越多编译越久。
 
+## 安装模型
+
+在 Studio 的 **设置 → 下载模型** 中下载 GGUF，或把已有的 `.gguf` 文件放进宿主机的 `checkpoints/`（也可放在它的一级子目录），再刷新模型列表。已有模型库可以通过修改 Compose 中挂载的宿主机路径接入，容器内路径保持 `/app/checkpoints`，并为容器保留写权限。
+
+网页自动转写使用已安装的本地模型。需要转写时，把完整的 [Qwen3-ASR-0.6B-hf](https://huggingface.co/Qwen/Qwen3-ASR-0.6B-hf/tree/7f1569a48a89f3e3f4dc3a5c9d28bddd903bc76c) 放在宿主机的 `checkpoints/Qwen3-ASR-0.6B-hf/`。
+
 ## 数据放在哪里
 
 | 宿主机 | 容器 | 说明 |
 | --- | --- | --- |
-| `checkpoints/` | `/app/checkpoints` | 模型权重，只读挂载 |
+| `checkpoints/` | `/app/checkpoints` | 可写的模型目录，重建容器后仍保留 |
 | `ui_data/` | `/app/ui_data` | **状态根**：`jobs/`、`uploads/`、`voices/`、`transcripts/`、`settings.json` |
 | `diagnostics/` | `/app/diagnostics` | 启动诊断 |
 
