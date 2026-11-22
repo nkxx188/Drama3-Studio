@@ -40,7 +40,7 @@
     || `${reference.voiceId || ''}:${reference.referenceIndex ?? 0}`;
   const edited = reference => { reference.editRevision = (reference.editRevision || 0) + 1; };
   function forVoice(voiceId, index = 0, bundle = true) {
-    const voice = state.voices.find(item => item.id === voiceId);
+    const voice = voiceById(voiceId);
     const clips = voice?.references || (voice ? [voice] : []);
     const clip = clips[index];
     if (!clip) return { ...fresh(), voiceId, libraryId: voiceId, referenceIndex: index };
@@ -63,7 +63,7 @@
   }
   function source(reference) {
     if (reference.upload) return reference.upload;
-    const voice = state.voices.find(item => item.id === reference.voiceId);
+    const voice = voiceById(reference.voiceId);
     return voice?.references?.[reference.referenceIndex ?? 0] || voice;
   }
   function transcribe(reference, changed, force = false) {
@@ -120,7 +120,7 @@
         transcript: reference.transcript || selected.transcript });
     }
     if (reference.voiceId && !reference.upload && !reference.transcript) {
-      reference.transcript = state.voices.find(voice => voice.id === reference.voiceId)?.transcript
+      reference.transcript = voiceById(reference.voiceId)?.transcript
         .replace(/^\s*<\|speaker:\d+\|>\s*/, '') || '';
     }
     delete reference.asrMode; reference.key ||= reference.id || crypto.randomUUID();

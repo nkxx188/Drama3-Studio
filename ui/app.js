@@ -1,5 +1,5 @@
 const state = {
-  voices: [], jobs: [], activeJob: null, selectedVoiceIds: new Set(),
+  voices: [], retainedVoices: new Map(), jobs: [], activeJob: null, selectedVoiceIds: new Set(),
   resultWorkspace: 'generate', resultJobs: { generate: null, scene: null },
   monitoredJobId: null, pollTimer: null, streamSubmitting: false, jobSubmitting: false,
   sourceTake: null, previousTake: null, takeRequest: 0,
@@ -1277,7 +1277,9 @@ function renderPreviewButton(button, playing) {
   button.dataset.i18nAriaLabel = label; button.setAttribute('aria-label', t(label));
 }
 function stopVoicePreview() {
-  audition?.pause();
+  if (audition) {
+    audition.pause(); audition.removeAttribute('src'); audition.load();
+  }
   if (auditionButton) renderPreviewButton(auditionButton, false);
   audition = auditionButton = null;
 }
@@ -1340,7 +1342,7 @@ function renderVoices() {
       };
     });
     container.querySelectorAll('[data-preview]').forEach(button => {
-      button.onclick = () => previewVoice(state.voices.find(voice => voice.id === button.dataset.preview), button);
+      button.onclick = () => previewVoice(voiceById(button.dataset.preview), button);
     });
   }
   $('voice-hint').innerHTML = state.voices.length
@@ -1349,6 +1351,22 @@ function renderVoices() {
     `<div class="voice-card" data-voice-id="${escapeHtml(voice.id)}" data-filter="${escapeHtml(`${voice.name} ${(voice.references || [voice]).map(clip => clip.transcript).join(' ')}`.toLocaleLowerCase())}"><div class="voice-card-head"><div class="voice-card-copy"><strong title="${escapeHtml(voice.name)}">${escapeHtml(voice.name)}</strong>${(voice.references?.length || 1) < 2 ? `<small>${translated('{count} reference clips', { count: 1 })}</small>` : ''}</div><button type="button" class="icon-btn voice-tile-preview" data-preview="${escapeHtml(voice.id)}" data-i18n-title="Preview voice" title="${escapeHtml(t('Preview voice'))}" data-i18n-aria-label="Preview voice" aria-label="${escapeHtml(t('Preview voice'))}" aria-pressed="false">${icon('play')}</button></div><p class="voice-transcript" title="${escapeHtml(voice.transcript)}">${escapeHtml(voice.transcript)}</p>${moreClips(voice)}<div class="voice-card-actions"><button type="button" class="text-btn use-voice" data-id="${escapeHtml(voice.id)}">${translated('Use this voice')}${icon('arrow')}</button><a class="voice-download" download href="${escapeHtml(voice.audio_url)}" data-i18n-title="Download" title="${escapeHtml(t('Download'))}" data-i18n-aria-label="Download" aria-label="${escapeHtml(t('Download'))}">${icon('download')}</a></div></div>`
   )).join('') : emptyState('mic', 'No voices saved');
   $('voice-count').textContent = state.voices.length;
+  for (const card of $('voice-list').querySelectorAll('.voice-card')) {
+    const id = card.dataset.voiceId;
+    const name = card.querySelector('strong').textContent;
+    card.dataset.cleanupId = id;
+    const checkbox = StudioCleanup.checkbox('voices', id);
+    checkbox.setAttribute('aria-label', t('Select voice {name}', { name }));
+    delete checkbox.dataset.i18nAriaLabel;
+    card.querySelector('.voice-card-head').prepend(checkbox);
+    const remove = document.createElement('button');
+    remove.className = 'icon-btn voice-delete'; remove.type = 'button';
+    remove.dataset.i18nTitle = remove.dataset.i18nAriaLabel = 'Delete voice';
+    remove.title = t('Delete voice'); remove.setAttribute('aria-label', remove.title);
+    const trash = ScriptEditor.icon('remove'); trash.classList.add('icon'); remove.append(trash);
+    remove.onclick = () => StudioCleanup.open('voices', [id], name, remove);
+    card.querySelector('.voice-card-actions').append(remove);
+  }
   updateVoiceSelection();
   $('voice-list').querySelectorAll('.use-voice').forEach(button => {
     button.onclick = () => {
@@ -1360,7 +1378,7 @@ function renderVoices() {
     };
   });
   $('voice-list').querySelectorAll('[data-preview]').forEach(button => {
-    button.onclick = () => previewVoice(state.voices.find(voice => voice.id === button.dataset.preview), button);
+      button.onclick = () => previewVoice(voiceById(button.dataset.preview), button);
   });
   $('voice-list').querySelectorAll('[data-preview-clip]').forEach(button => {
     button.onclick = () => previewVoice({ audio_url: button.dataset.previewClip }, button);
@@ -1374,19 +1392,36 @@ function renderVoices() {
 }
 function filterVoices() {
   const query = $('voice-search').value.trim().toLocaleLowerCase();
+  let matches = 0;
   for (const card of $('voice-list').querySelectorAll('.voice-card')) {
     card.hidden = !card.dataset.filter.includes(query);
     if (card.hidden && card.contains(auditionButton)) stopVoicePreview();
+    if (!card.hidden) matches++;
   }
+  const empty = $('voice-search-empty');
+  empty.hidden = !state.voices.length || matches > 0;
+  if (!empty.hidden) empty.innerHTML = emptyState('search', 'No matches found');
+  StudioCleanup.sync('voices');
 }
 $('voice-search').addEventListener('input', filterVoices);
-async function loadVoices() {
-  try {
-    state.voices = (await api('/api/voices')).voices;
-    const valid = new Set(state.voices.map(voice => voice.id));
-    state.selectedVoiceIds = new Set(selectedVoices().filter(id => valid.has(id)));
+const voiceById = id => state.voices.find(voice => voice.id === id) || state.retainedVoices.get(id);
+let voiceRequest = 0;
+async function loadVoices(deletion = null) {
+  const request = ++voiceRequest;
+  if (deletion) {
+    const deleted = new Set(deletion.deleted);
+    state.voices = state.voices.filter(voice => !deleted.has(voice.id));
+    for (const voice of deletion.retained) state.retainedVoices.set(voice.id, voice);
     renderVoices();
-  } catch (error) { $('voice-hint').textContent = message(error.message); }
+    return;
+  }
+  try {
+    const data = await api('/api/voices');
+    if (request !== voiceRequest) return;
+    state.voices = data.voices;
+    state.retainedVoices = new Map((data.retained || []).map(voice => [voice.id, voice]));
+    renderVoices();
+  } catch (error) { if (request === voiceRequest) $('voice-hint').textContent = message(error.message); }
 }
 
 function payloadFromForm() {
@@ -1447,18 +1482,21 @@ async function restoredVersionResult(source, workspace, version = null) {
 async function restoreWorkspaceResults(singleId, sceneId, sources = {}) {
   const jobs = [...state.jobs];
   for (const id of new Set([singleId, sceneId].filter(Boolean))) {
-    if (jobs.some(job => job.id === id)) continue;
+    if (removedJobs.has(id) || jobs.some(job => job.id === id)) continue;
     try { jobs.push(await api(`/api/jobs/${encodeURIComponent(id)}`)); } catch (_) { /* keep recent results available */ }
   }
   for (const [workspace, id] of [['generate', singleId], ['scene', sceneId]]) {
+    if (id === null || removedJobs.has(id)) {
+      state.resultJobs[workspace] = null;
+      continue;
+    }
     if (id && sources[workspace]?.job_id === id) {
       try { state.resultJobs[workspace] = await restoredVersionResult(sources[workspace], workspace); }
       catch (_) { state.resultJobs[workspace] = null; }
       continue;
     }
-    state.resultJobs[workspace] = id === null ? null
-      : jobs.find(job => job?.id === id && resultWorkspaceFor(job) === workspace)
-        || jobs.find(job => job && resultWorkspaceFor(job) === workspace) || null;
+    state.resultJobs[workspace] = jobs.find(job => job?.id === id && resultWorkspaceFor(job) === workspace)
+      || jobs.find(job => job && resultWorkspaceFor(job) === workspace) || null;
   }
 }
 function showWorkspaceResult(name) {
@@ -1733,9 +1771,20 @@ document.addEventListener('keydown', event => {
     event.preventDefault(); submit.click();
   }
 });
-$('refresh-btn').onclick = () => { loadHealth(); loadVoices(); loadJobs(); loadModel(); };
-$('refresh-jobs').onclick = loadJobs;
-const historyTranscripts = new Map();
+const historyTranscripts = new Map(), olderJobs = new Map(), removedJobs = new Set();
+const jobActive = job => ['queued', 'running'].includes(job?.status);
+const atOrAfter = (job, cursor) => job.created_at > cursor[0]
+  || (job.created_at === cursor[0] && job.id >= cursor[1]);
+let historyFilter = 'all', historyRequest = 0, firstHistoryCursor = null, olderHistoryCursor;
+let historyReset = 0;
+function refreshHistory() {
+  historyReset++;
+  olderJobs.clear(); olderHistoryCursor = undefined;
+  return loadJobs();
+}
+$('refresh-btn').onclick = () => { loadHealth(); loadVoices(); refreshHistory(); loadModel(); };
+$('refresh-jobs').onclick = refreshHistory;
+
 function renderHistoryTitle(job, heading) {
   const lines = job.recipe?.lines || job.result?.segments || job.result?.chunks || [];
   const text = [job.recipe?.text, job.result?.text, job.text, job.payload_summary?.text,
@@ -1764,10 +1813,23 @@ function renderHistoryTitle(job, heading) {
   if (!cached.text) cached.pending.then(() => { if (heading.isConnected) show(cached.text); });
 }
 async function loadJobs() {
+  const request = ++historyRequest;
   try {
-    const wasGenerating = state.jobs.some(job => ['queued', 'running'].includes(job.status));
-    state.jobs = (await api('/api/jobs')).jobs;
-    if (wasGenerating && !state.jobs.some(job => ['queued', 'running'].includes(job.status))) loadHealth();
+    const previous = state.jobs, page = await api('/api/jobs');
+    if (request !== historyRequest) return;
+    state.jobs = page.jobs.filter(job => !removedJobs.has(job.id));
+    firstHistoryCursor = page.next_cursor;
+    if (firstHistoryCursor) {
+      if (olderHistoryCursor !== undefined) {
+        for (const job of previous) {
+          if (!jobActive(job) && !atOrAfter(job, firstHistoryCursor)) olderJobs.set(job.id, job);
+        }
+      }
+      for (const [id, job] of olderJobs) if (atOrAfter(job, firstHistoryCursor)) olderJobs.delete(id);
+    } else {
+      olderJobs.clear(); olderHistoryCursor = undefined;
+    }
+    if (previous.some(jobActive) && !state.jobs.some(jobActive)) loadHealth();
     for (const workspace of ['generate', 'scene']) {
       const current = state.resultJobs[workspace];
       const updated = state.jobs.find(job => job.id === current?.id && resultWorkspaceFor(job) === workspace);
@@ -1780,19 +1842,54 @@ async function loadJobs() {
     $('view-latest-take').classList.toggle('hidden', !offerLatest);
     $('view-latest-take').parentElement.classList.toggle('hidden', !offerLatest);
     $('view-latest-take').onclick = () => latest && monitorJob(latest.id);
+    renderHistory();
+    if (document.documentElement.dataset.startup !== 'ready') {
+      await Promise.all([...historyTranscripts.values()].map(value => value.pending));
+    }
+    window.StudioFlow?.syncControls();
+  } catch (error) {
+    if (request !== historyRequest) return;
+    $('jobs-cleanup-note').textContent = message(error.message);
+    $('jobs-cleanup-note').hidden = false;
+  }
+}
+
+function historyJobs() {
+  return [...new Map([...olderJobs.values(), ...state.jobs].map(job => [job.id, job])).values()]
+    .filter(job => job.mode !== 'audio_import' && !removedJobs.has(job.id))
+    .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? 1 : -1));
+}
+
+function removeHistoryJobs(ids) {
+  const takes = historyJobs().filter(job => ids.has(job.id));
+  state.jobs = state.jobs.filter(job => !ids.has(job.id));
+  for (const id of ids) { removedJobs.add(id); olderJobs.delete(id); }
+  for (const job of takes) historyTranscripts.delete(job.take_file || job.result?.native_take_file || job.result?.take_file);
+  for (const workspace of ['generate', 'scene']) {
+    if (ids.has(state.resultJobs[workspace]?.id)) state.resultJobs[workspace] = null;
+  }
+  if (ids.has(state.monitoredJobId) || ids.has(state.activeJob?.id)) showWorkspaceResult(state.resultWorkspace);
+  document.dispatchEvent(new CustomEvent('drama:jobsdeleted', { detail: ids }));
+  renderHistory();
+}
+
+function renderHistory() {
     const list = $('job-list');
     const existing = new Map([...list.querySelectorAll('.job-card')].map(row => [row.dataset.jobId, row]));
-    if (state.jobs.length && list.querySelector('.empty-state')) list.replaceChildren();
-    let position = list.firstChild;
-    const jobs = [...new Map([...(window.StudioFlow?.historyJobs() || []), ...state.jobs].map(job => [job.id, job])).values()]
-      .filter(job => job.mode !== 'audio_import')
-      .sort((a, b) => b.created_at - a.created_at);
+    const jobs = historyJobs();
+    let position = [...list.children].find(item => item.classList.contains('job-card')) || null;
+    let visible = 0;
     for (const job of jobs) {
       let row = existing.get(job.id);
       if (!row) {
         row = document.createElement('div'); row.className = 'job-card'; row.dataset.jobId = job.id;
         row.innerHTML = '<div class="job-copy"><strong class="job-title"></strong><div class="job-details"><small class="job-date"></small><small class="job-model"></small></div></div><div class="job-meta"><span class="job-status"></span><small class="job-size"></small></div><div class="job-actions"></div>';
+        row.dataset.cleanupId = job.id;
+        row.prepend(StudioCleanup.checkbox('jobs', job.id));
       }
+      row.hidden = historyFilter === 'unfinished' && (job.status === 'complete' || jobActive(job));
+      if (!row.hidden) visible++;
+      row.querySelector('.cleanup-check').disabled = jobActive(job);
       renderHistoryTitle(job, row.querySelector('.job-title'));
       row.querySelector('.job-date').dataset.date = job.created_at;
       row.querySelector('.job-date').textContent = new Date(job.created_at * 1000).toLocaleString(I18n.locale);
@@ -1804,19 +1901,28 @@ async function loadJobs() {
         t('{count} chars', { count: job.payload_summary?.text_length || 0 }),
         audioDurationLabel(job), generationTimeLabel(job),
       ].filter(Boolean).join(' · ');
-      const actions = row.querySelector('.job-actions'), shape = JSON.stringify([job.output, job.take_file]);
+      const actions = row.querySelector('.job-actions'), shape = JSON.stringify([job.output, job.take_file, jobActive(job)]);
       if (actions.dataset.shape !== shape) {
         actions.dataset.shape = shape;
-        actions.innerHTML = `${job.output ? `<button type="button" class="text-btn history-play" aria-pressed="false">${icon('play')}${translated('Play')}</button><a class="icon-btn download-link history-download" download href="${fileUrl(job.output)}" data-i18n-title="Download" title="${escapeHtml(t('Download'))}" data-i18n-aria-label="Download" aria-label="${escapeHtml(t('Download'))}">${icon('download')}</a>` : ''}${job.output || job.take_file ? `<details class="command-menu history-actions"><summary class="text-btn">${translated('More')}</summary><div class="command-menu-list">${job.take_file ? `<button class="menu-command use-take" data-path="${escapeHtml(job.take_file)}" data-mode="revision">${translated('Edit')}</button>` : ''}<button class="menu-command restore-job" data-id="${escapeHtml(job.id)}">${translated('Restore as draft')}</button></div></details>` : ''}`;
+        actions.innerHTML = `${job.output ? `<button type="button" class="text-btn history-play" aria-pressed="false">${icon('play')}${translated('Play')}</button><a class="icon-btn download-link history-download" download href="${fileUrl(job.output)}" data-i18n-title="Download" title="${escapeHtml(t('Download'))}" data-i18n-aria-label="Download" aria-label="${escapeHtml(t('Download'))}">${icon('download')}</a>` : ''}${job.output || job.take_file || !jobActive(job) ? `<details class="command-menu history-actions"><summary class="text-btn">${translated('More')}</summary><div class="command-menu-list">${job.take_file ? `<button class="menu-command use-take" data-path="${escapeHtml(job.take_file)}" data-mode="revision">${translated('Edit')}</button>` : ''}${job.output || job.take_file ? `<button class="menu-command restore-job" data-id="${escapeHtml(job.id)}">${translated('Restore as draft')}</button>` : ''}${jobActive(job) ? '' : `<button class="menu-command history-delete danger-command" type="button">${translated('Delete')}</button>`}</div></details>` : ''}`;
       }
       const play = actions.querySelector('.history-play');
       if (play) play.onclick = () => previewVoice({ audio_url: fileUrl(job.output) }, play);
+      const remove = actions.querySelector('.history-delete');
+      if (remove) remove.onclick = () => {
+        const menu = remove.closest('details'); menu.open = false;
+        StudioCleanup.open('jobs', [job.id], row.querySelector('.job-title').textContent, menu.querySelector('summary'));
+      };
       if (row !== position) list.insertBefore(row, position);
       position = row.nextSibling; existing.delete(job.id);
     }
     for (const row of existing.values()) row.remove();
-    if (auditionButton && !auditionButton.isConnected) stopVoicePreview();
-    if (!jobs.length) list.innerHTML = emptyState('history', 'No takes yet');
+    if (auditionButton && (!auditionButton.isConnected || auditionButton.closest('.job-card')?.hidden)) stopVoicePreview();
+    const empty = list.querySelector(':scope > .empty-state');
+    const emptyLabel = historyFilter === 'all' ? 'No takes yet' : 'No unfinished results';
+    if (!visible && empty?.querySelector('[data-i18n]')?.dataset.i18n !== emptyLabel) {
+      empty?.remove(); list.insertAdjacentHTML('beforeend', emptyState('history', emptyLabel));
+    } else if (visible) empty?.remove();
     document.querySelectorAll('.use-take').forEach(button => {
       button.hidden = !state.capabilities?.director_revision && !state.capabilities?.infill;
       button.onclick = () => useTake(button.dataset.path, button.dataset.mode);
@@ -1825,13 +1931,35 @@ async function loadJobs() {
       button.onclick = () => window.StudioFlow?.restoreVersion({ job_id: button.dataset.id });
     });
     StudioAudio.enhance($('job-list'));
-    if (document.documentElement.dataset.startup !== 'ready') {
-      await Promise.all([...historyTranscripts.values()].map(value => value.pending));
-    }
-    window.StudioFlow?.renderWorks();
-    window.StudioFlow?.syncControls();
-  } catch (error) { $('job-list').textContent = message(error.message); }
+    $('load-older-results').hidden = !(olderHistoryCursor === undefined ? firstHistoryCursor : olderHistoryCursor);
+    StudioCleanup.sync('jobs');
 }
+
+$('load-older-results').onclick = async () => {
+  const button = $('load-older-results');
+  const cursor = olderHistoryCursor === undefined ? firstHistoryCursor : olderHistoryCursor;
+  if (!cursor) return;
+  const reset = historyReset;
+  button.disabled = true;
+  try {
+    const page = await api(`/api/jobs?before=${encodeURIComponent(JSON.stringify(cursor))}`);
+    if (reset !== historyReset) return;
+    for (const job of page.jobs) if (!removedJobs.has(job.id)) olderJobs.set(job.id, job);
+    olderHistoryCursor = page.next_cursor;
+    renderHistory();
+  } catch (error) {
+    $('jobs-cleanup-note').textContent = message(error.message);
+    $('jobs-cleanup-note').hidden = false;
+  } finally { button.disabled = false; }
+};
+$('history-filters').onclick = event => {
+  const selected = event.target.closest('[data-history-filter]');
+  if (!selected || selected.dataset.historyFilter === historyFilter) return;
+  historyFilter = selected.dataset.historyFilter;
+  for (const button of $('history-filters').children) button.setAttribute('aria-pressed', String(button === selected));
+  $('jobs-cleanup-note').hidden = true;
+  renderHistory();
+};
 function updateVoiceUpload() {
   const file = $('voice-audio').files[0];
   if (state.voicePreviewUrl) URL.revokeObjectURL(state.voicePreviewUrl);

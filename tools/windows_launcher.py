@@ -65,8 +65,22 @@ def ui_url(host, port):
 
 def probe_instance(host, port):
     """A cheap app identity check; never invoke CUDA or trust another port's health API."""
-    request = Request(ui_url(host, port) + "api/instance", headers={"Connection": "close"})
+    host = browser_host(host)
     try:
+        # Winsock can spend a full timeout on each closed port. Binding first
+        # lets local launches skip unused ports without waiting for a connection.
+        if host in ("127.0.0.1", "::1"):
+            import socket
+            with socket.socket(socket.AF_INET6 if host == "::1" else socket.AF_INET) as listener:
+                if os.name == "nt":
+                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                try:
+                    listener.bind((host, port))
+                except OSError:
+                    pass
+                else:
+                    return False
+        request = Request(ui_url(host, port) + "api/instance", headers={"Connection": "close"})
         # Local startup must not depend on the user's proxy settings.
         with build_opener(ProxyHandler({})).open(request, timeout=0.3) as response:
             value = json.loads(response.read(8192))
@@ -141,6 +155,8 @@ def reopen(url, *, open_browser):
 
 
 def run_ui(args):
+    if os.environ.pop("DRAMA_STARTUP_ANNOUNCED", None) != "1":
+        print("Starting Drama 3 Studio...", flush=True)
     existing = existing_instance(args.host, args.port)
     if existing:
         reopen(existing, open_browser=args.open_browser)
@@ -160,7 +176,6 @@ def run_ui(args):
         if existing:
             reopen(existing, open_browser=args.open_browser)
             return
-        print("Starting Drama 3 Studio...", flush=True)
         from drama_low_vram.studio_logging import console_session, detail, status
         with console_session(ROOT):
             detail("Starting Drama 3 Studio")

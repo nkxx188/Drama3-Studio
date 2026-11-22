@@ -458,6 +458,10 @@
     }
   });
   document.addEventListener('drama:viewchange', event => { if (event.detail === 'audio-import') hydrate(); });
+  document.addEventListener('drama:jobsdeleted', ({ detail: ids }) => {
+    if (!ids.has(draft.resultJobId)) return;
+    resetResult(); render();
+  });
   window.addEventListener('drama:startup-ready', () => { if (document.documentElement.dataset.view === 'audio-import') hydrate(); });
   for (const event of ['drama:capabilities', 'drama:resourceschange', 'drama:languagechange']) {
     document.addEventListener(event, () => { if (ready) { drawMatches(); render(); } });

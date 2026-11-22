@@ -381,6 +381,8 @@ input[type="checkbox"] { accent-color: var(--accent); margin-top: 5px; }
 .model-source-option { min-height: 32px; padding: 5px 11px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font-size: var(--type-action); white-space: nowrap; }
 .model-source-option[aria-pressed="true"] { border-color: #e5e8ed; background: #fff; color: var(--text); box-shadow: 0 1px 2px #17212b12; }
 .model-source-option:disabled { opacity: .42; cursor: not-allowed; }
+.history-filter { min-height: 32px; padding: 5px 11px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font-size: var(--type-action); white-space: nowrap; }
+.history-filter[aria-pressed="true"] { border-color: #e5e8ed; background: #fff; color: var(--text); box-shadow: 0 1px 2px #17212b12; }
 #model-download-source-note { margin: 6px 0 0; }
 #download-model { flex: 0 0 auto; gap: 8px; }
 #download-model .icon { width: 16px; height: 16px; }

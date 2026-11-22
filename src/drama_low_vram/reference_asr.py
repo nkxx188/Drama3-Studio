@@ -185,7 +185,7 @@ class ReferenceTranscriber:
             "DRAMA_ASR_MODEL_DIR", str(self.root / "checkpoints/Qwen3-ASR-0.6B-hf")))
         self.executor, self.runner = executor, runner or transcribe_audio
         self._lock = threading.RLock()
-        self._tasks, self._pending = {}, {}
+        self._tasks, self._pending, self._pending_audio = {}, {}, {}
 
     def start(self, audio, *, language="auto", force=False, local_only=False):
         if (not isinstance(force, bool) or not isinstance(local_only, bool)
@@ -223,8 +223,13 @@ class ReferenceTranscriber:
                 self._tasks.pop(task["id"])
                 return self.get(pending)
             self._pending[digest] = task["id"]
+            self._pending_audio[digest] = audio
             self.executor.submit(self._run, task["id"], digest, audio, language, cached, local_only)
             return self.get(task["id"])
+
+    def pending_audio(self):
+        with self._lock:
+            return list(self._pending_audio.values())
 
     def get(self, task_id):
         with self._lock:
@@ -268,3 +273,4 @@ class ReferenceTranscriber:
         finally:
             with self._lock:
                 self._pending.pop(digest, None)
+                self._pending_audio.pop(digest, None)

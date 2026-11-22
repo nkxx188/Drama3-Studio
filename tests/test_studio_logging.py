@@ -161,7 +161,8 @@ def test_server_stop_status_remains_visible_and_resources_are_closed(tmp_path, m
     monkeypatch.setattr(ui, "ROOT", tmp_path)
     closed = []
     monkeypatch.setattr(ui, "STATE", SimpleNamespace(
-        checkpoint=tmp_path / "example.gguf", shutdown=lambda: closed.append("state")))
+        checkpoint=tmp_path / "example.gguf", shutdown=lambda: closed.append("state"),
+        retry_record_cleanup=lambda: None))
 
     def stop():
         raise KeyboardInterrupt()

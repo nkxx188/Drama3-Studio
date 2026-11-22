@@ -43,8 +43,7 @@
     design: fresh('design'), voiceSource: 'reference', designLegacy: null, writing: null, referenceTask: null,
     operation: null, returnDrafts: [], restoring: false, lastVoice: null,
     watch: null, lastSubmit: null, singleForm: null, singleReferences: [], libraryReferences: [],
-    versionFocus: null, workJobs: {}, missingJobs: new Set(), historyLoads: new Map(),
-    failedHistories: new Set(), restoredFrom: null, restoredModel: null, designRecipe: null, designHistoryReturn: false,
+    versionFocus: null, restoredFrom: null, restoredModel: null, designRecipe: null, designHistoryReturn: false,
     contexts: new Map(), contextLoads: new Map(), streamDraft: null, switchingInput: false };
   flow.voiceDraft = { main: ReferencePrep.fresh(), name: '', autoName: null };
   const formIds = ['text', 'direction', 'language', 'seed',
@@ -482,7 +481,7 @@
     view('scene'); enhanceAllSelects(); saveSoon();
   }
   function findTake(path) {
-    for (const job of [...Object.values(state.resultJobs), ...state.jobs, ...Object.values(flow.workJobs)].filter(Boolean)) {
+    for (const job of [...Object.values(state.resultJobs), ...historyJobs()].filter(Boolean)) {
       if (job.take_file === path) return job.restoredSource || { job_id: job.id };
       const rows = segmentsOf(job), index = rows.findIndex(row => row.take_file === path);
       if (index >= 0) return { job_id: job.id, part_index: rows[index].index ?? index };
@@ -490,32 +489,12 @@
     return null;
   }
   async function refresh() {
-    flow.data = await api('/api/studio'); await loadJobs();
+    await loadJobs();
     if (state.activeJob) renderResults(state.activeJob);
   }
   function knownJob(id) {
     return Object.values(state.resultJobs).find(job => job?.id === id)
-      || state.jobs.find(job => job.id === id) || flow.workJobs[id];
-  }
-  async function ensureWorkHistory(work) {
-    if (!work || flow.failedHistories.has(work.id)) return;
-    const ids = work.segments.flatMap(part => part.versions);
-    if (ids.every(id => knownJob(id) || flow.missingJobs.has(id))) return;
-    if (flow.historyLoads.has(work.id)) return flow.historyLoads.get(work.id);
-    const pending = (async () => {
-      let offset = 0;
-      do {
-        const page = await api(`/api/studio/work/${encodeURIComponent(work.id)}/jobs?offset=${offset}&limit=100`);
-        for (const job of page.jobs) flow.workJobs[job.id] = job;
-        for (const id of page.missing) flow.missingJobs.add(id);
-        offset = page.next_offset;
-      } while (offset !== null);
-    })().catch(error => { flow.failedHistories.add(work.id); throw error; })
-      .finally(() => {
-        flow.historyLoads.delete(work.id);
-        if (state.activeJob) renderResults(state.activeJob);
-      });
-    flow.historyLoads.set(work.id, pending); return pending;
+      || state.jobs.find(job => job.id === id) || olderJobs.get(id);
   }
   function watch() {
     clearTimeout(flow.watch);
@@ -630,11 +609,6 @@
     bar.append(command('Regenerate', () => guarded(() => retry(source, job.restoredSource ? job.studio : null))),
       actions(job, source, true, row.closest('.result-box')));
     row.append(bar);
-  }
-  function renderWorks() {
-    const more = $('load-older-results'); if (!more || !flow.ready) return;
-    more.hidden = !Object.values(flow.data.works || {}).some(work =>
-      work.segments.some(part => part.versions.some(id => !knownJob(id) && !flow.missingJobs.has(id))));
   }
   function completeRecipe(job) {
     return job.recipe?.schema === 1 && ['model', 'seed', 'max_new_tokens', 'temperature', 'top_p',
@@ -953,20 +927,6 @@
     dismissNotice.title = t('Close'); dismissNotice.dataset.i18nTitle = 'Close';
     notice.append(noticeMessage, dismissNotice);
     $('view-generate').before(notice);
-    const older = command('Load older results', () => guarded(async () => {
-      older.disabled = true;
-      try {
-        const pending = Object.values(flow.data.works || {}).sort((a, b) => b.updated_at - a.updated_at)
-          .filter(work => work.segments.some(part => part.versions.some(id => !knownJob(id) && !flow.missingJobs.has(id))));
-        for (const work of pending.slice(0, 8)) {
-          flow.failedHistories.delete(work.id); await ensureWorkHistory(work);
-        }
-        await loadJobs();
-      } finally { older.disabled = false; }
-    }), 'secondary-btn'); older.id = 'load-older-results'; older.hidden = true;
-    $('job-list').after(older);
-    const historyTitle = document.querySelector('.history-panel .panel-heading h3');
-    historyTitle.dataset.i18n = 'History'; historyTitle.textContent = t('History');
     // Keep protocol fields for request/draft compatibility, outside the user controls.
     const internal = node('div'); internal.id = 'internal-task-state'; internal.hidden = true; internal.inert = true;
     internal.append($('mode').closest('.custom-select') || $('mode'));
@@ -1168,14 +1128,14 @@
     }
     const existing = new Map([...box.children].map(row => [row.dataset.libraryId, row]));
     for (const reference of flow.libraryReferences) {
-      const voice = state.voices.find(voice => voice.id === reference.libraryId);
+      const voice = voiceById(reference.libraryId);
       let row = existing.get(reference.libraryId);
       if (row?.boundReference !== reference) {
         row?.remove(); row = node('div', 'selected-library-voice'); row.dataset.libraryId = reference.libraryId;
         row.boundReference = reference;
         const name = node('strong');
         const play = command('Preview voice', () => previewVoice(
-          state.voices.find(voice => voice.id === reference.libraryId), play), 'icon-btn reference-compact-play');
+          voiceById(reference.libraryId), play), 'icon-btn reference-compact-play');
         delete play.dataset.i18n; play.innerHTML = icon('play');
         play.dataset.i18nAriaLabel = play.dataset.i18nTitle = 'Preview voice';
         play.setAttribute('aria-label', t('Preview voice')); play.title = t('Preview voice');
@@ -1353,7 +1313,7 @@
       clip = ReferencePrep.previews(candidate, role.speaker)[0];
       if (clip) { reference = candidate; break; }
     }
-    const voice = state.voices.find(item => item.id === reference.voiceId);
+    const voice = voiceById(reference.voiceId);
     return {
       reference,
       name: reference.upload?.filename || voice?.name || clip?.audio?.replaceAll('\\', '/').split('/').at(-1) || '',
@@ -1827,9 +1787,8 @@
     }
   }
   function translate() {
-    ScriptEditor.translate(); renderOperation(); renderSceneOperation(); renderWorks();
+    ScriptEditor.translate(); renderOperation(); renderSceneOperation();
     renderSpeakers();
-    for (const element of document.querySelectorAll('.studio-dialog [data-i18n]')) element.textContent = t(element.dataset.i18n);
   }
   function configureWorkspaceLayout() {
     const compose = document.querySelector('.compose-panel');
@@ -2033,7 +1992,7 @@
     await restoreWorkspaceResults(draft?.active_job_id, savedScene?.active_job_id, {
       generate: draft?.active_result_source, scene: savedScene?.active_result_source,
     });
-    flow.ready = true; renderWorks(); syncControls();
+    flow.ready = true; syncControls();
     if (!voiceDesignActive()) resumeCloneTranscription();
     document.addEventListener('input', saveSoon);
     document.addEventListener('change', saveSoon);
@@ -2081,7 +2040,7 @@
     sourceActive: () => Boolean(flow.operation && !flow.operation.legacy),
     lockText: () => flow.operation?.action === 'revision' && !flow.operation.legacy,
     lockVoice: () => Boolean(flow.operation && !flow.operation.legacy),
-    prepareRequest, submitted, enhanceResult, enhanceSegment, afterResults, renderWorks,
+    prepareRequest, submitted, enhanceResult, enhanceSegment, afterResults,
     useLibraryVoice, referenceChanged: saveSoon, referencePrewarmPayload,
     voicesChanged: () => {
       ReferencePrep.refreshLibraries();
@@ -2090,7 +2049,6 @@
       syncControls();
     },
     syncControls,
-    historyJobs: () => [...Object.values(flow.workJobs), ...Object.values(state.resultJobs).filter(Boolean)],
     restoreVersion: source => guarded(() => restoreVersion(source)),
     async openTake(path, mode, selection) {
       const source = findTake(path); if (!source) return false;

@@ -56,6 +56,68 @@ class StudioStore:
             self._save()
             return clone(self.data["drafts"][key])
 
+    def removed(self, kind):
+        with self.lock:
+            return set(self.data.get("removed", {}).get(kind, []))
+
+    def remove_from_list(self, kind, identifiers):
+        if not identifiers:
+            return
+        with self.lock:
+            before = clone(self.data)
+            try:
+                removed = self.data.setdefault("removed", {})
+                removed[kind] = sorted(self.removed(kind) | set(identifiers))
+                if kind == "jobs":
+                    for draft in self.data["drafts"].values():
+                        self.clear_results(draft["value"], identifiers.__contains__)
+                self._save()
+            except OSError:
+                self.data = before
+                raise
+
+    @staticmethod
+    def clear_results(value, is_removed):
+        if isinstance(value, dict):
+            for field, child in value.items():
+                if field in ("active_job_id", "result_job_id", "resultJobId"):
+                    if isinstance(child, str) and is_removed(child):
+                        value[field] = None
+                elif field == "active_result_source" and isinstance(child, dict):
+                    if isinstance(child.get("job_id"), str) and is_removed(child["job_id"]):
+                        value[field] = None
+                else:
+                    StudioStore.clear_results(child, is_removed)
+        elif isinstance(value, list):
+            for child in value:
+                StudioStore.clear_results(child, is_removed)
+
+    def forget_removed(self, jobs, voices):
+        if not jobs and not voices:
+            return
+        with self.lock:
+            before = clone(self.data)
+            try:
+                self.data["removed"].update(jobs=sorted(self.removed("jobs") - jobs),
+                                            voices=sorted(self.removed("voices") - voices))
+                works = list(self.data["works"].items()) if jobs else []
+                for work_id, work in works:
+                    for part in work["segments"]:
+                        part["versions"] = [identifier for identifier in part["versions"] if identifier not in jobs]
+                        for key in ("adopted", "scene_version"):
+                            if (part.get(key) or {}).get("job_id") in jobs:
+                                part[key] = None
+                        if "line_versions" in part:
+                            part["line_versions"] = {key: value for key, value in part["line_versions"].items()
+                                                     if value.get("job_id") not in jobs}
+                    work["segments"] = [part for part in work["segments"] if part["versions"]]
+                    if not work["segments"]:
+                        del self.data["works"][work_id]
+                self._save()
+            except OSError:
+                self.data = before
+                raise
+
     def register(self, job):
         context = job.get("studio")
         if not context:
@@ -77,8 +139,8 @@ class StudioStore:
                 segment.setdefault("line_order", clone(job["recipe"]["line_ids"]))
             if (job["recipe"].get("mode") == "scene"
                     and job["recipe"].get("scene_strategy", "per_line") == "per_line"
-                    and not context.get("line_id")):
-                segment.setdefault("scene_version", {"job_id": job["id"]})
+                    and not context.get("line_id") and not segment.get("scene_version")):
+                segment["scene_version"] = {"job_id": job["id"]}
             work["updated_at"] = time.time()
             self._save()
 

@@ -1,6 +1,7 @@
 @echo off
 setlocal
 title Drama 3 Studio
+if "%~1"=="" echo Starting Drama 3 Studio...
 pushd "%~dp0"
 if errorlevel 1 exit /b 1
 set "PYTHONUTF8=1"
@@ -8,6 +9,7 @@ set "PYTHONIOENCODING=utf-8"
 set "DRAMA_PYTHON=%~dp0runtime\python\python.exe"
 if not exist "%DRAMA_PYTHON%" set "DRAMA_PYTHON=%~dp0.venv\Scripts\python.exe"
 if not exist "%DRAMA_PYTHON%" goto missing_runtime
+if "%~1"=="" set "DRAMA_STARTUP_ANNOUNCED=1"
 "%DRAMA_PYTHON%" -I "%~dp0tools\windows_launcher.py" %*
 set "DRAMA_EXIT=%errorlevel%"
 if not "%DRAMA_EXIT%"=="0" goto failed

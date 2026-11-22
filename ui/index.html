@@ -74,7 +74,7 @@
       <div class="workspace-frame">
         <div id="startup-state" role="status" aria-live="polite">
           <span class="startup-spinner" aria-hidden="true"></span>
-          <span class="startup-loading" data-i18n="Opening workspace…">Opening workspace…</span>
+          <span class="startup-loading" data-i18n="Opening workspace…">正在打开工作区…</span>
           <div class="startup-failure">
             <strong data-i18n="Could not open the workspace.">Could not open the workspace.</strong>
             <p id="startup-error"></p>
@@ -234,11 +234,32 @@
         <div class="voice-library-toolbar">
           <label class="library-search" for="voice-search"><svg class="icon"><use href="#i-search"/></svg><input id="voice-search" type="search" placeholder="Search your voices…" data-i18n-placeholder="Search your voices…" aria-label="Search your voices…" data-i18n-aria-label="Search your voices…"></label>
           <span class="badge" id="voice-count">0</span>
+          <button id="voices-select" class="secondary-btn cleanup-toggle" type="button" aria-pressed="false" data-i18n="Select items">Select items</button>
           <button id="add-voice" class="primary-btn" type="button" disabled><svg class="icon"><use href="#i-plus"/></svg><span data-i18n="Add a voice">Add a voice</span></button>
         </div>
+        <div id="voices-cleanup" class="cleanup-bar" hidden></div>
+        <p id="voices-cleanup-note" class="cleanup-note" role="status" hidden></p>
         <div id="voice-list" class="voice-list"></div>
+        <div id="voice-search-empty" hidden></div>
       </section>
-      <section class="view" id="view-takes"><div class="panel history-panel"><div class="panel-head"><div class="panel-heading"><svg class="icon"><use href="#i-history"/></svg><h3 data-i18n="Recent jobs">Recent jobs</h3></div><button class="secondary-btn" id="refresh-jobs"><svg class="icon"><use href="#i-refresh"/></svg><span data-i18n="Refresh">Refresh</span></button></div><div id="job-list" class="job-list"></div></div></section>
+      <section class="view" id="view-takes">
+        <div class="panel history-panel">
+          <div class="panel-head history-toolbar">
+            <div class="segmented-control" id="history-filters" role="group" aria-label="Filter history" data-i18n-aria-label="Filter history">
+              <button class="history-filter" type="button" data-history-filter="all" aria-pressed="true" data-i18n="All results">All results</button>
+              <button class="history-filter" type="button" data-history-filter="unfinished" aria-pressed="false" data-i18n="Unfinished results">Unfinished results</button>
+            </div>
+            <div class="panel-actions">
+              <button id="jobs-select" class="secondary-btn cleanup-toggle" type="button" aria-pressed="false" data-i18n="Select items">Select items</button>
+              <button class="icon-btn" id="refresh-jobs" type="button" title="Refresh" data-i18n-title="Refresh" aria-label="Refresh" data-i18n-aria-label="Refresh"><svg class="icon"><use href="#i-refresh"/></svg></button>
+            </div>
+          </div>
+          <div id="jobs-cleanup" class="cleanup-bar" hidden></div>
+          <p id="jobs-cleanup-note" class="cleanup-note" role="status" hidden></p>
+          <div id="job-list" class="job-list"></div>
+          <button id="load-older-results" class="secondary-btn" type="button" data-i18n="Load older results" hidden>Load older results</button>
+        </div>
+      </section>
       <section class="view" id="view-settings">
         <section class="about-panel" id="studio-about" aria-labelledby="studio-about-title">
           <div class="about-heading">
@@ -368,11 +389,24 @@
       <div class="compose-footer studio-dialog-footer"><div class="form-note" id="voice-form-note" role="status" aria-live="polite"></div><button class="primary-btn" type="submit" id="save-voice"><span data-i18n="Save voice">Save voice</span><svg class="icon"><use href="#i-check"/></svg></button></div>
     </form>
   </dialog>
+  <dialog id="delete-dialog" class="studio-dialog delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-description">
+    <div class="studio-dialog-heading"><h2 id="delete-title"></h2></div>
+    <div class="studio-dialog-body">
+      <p id="delete-item" hidden></p>
+      <p id="delete-description" data-i18n="This action cannot be undone.">This action cannot be undone.</p>
+      <p id="delete-error" class="cleanup-note" role="alert" hidden></p>
+    </div>
+    <div class="studio-dialog-footer">
+      <button id="delete-cancel" class="secondary-btn" type="button" data-i18n="Cancel" autofocus>Cancel</button>
+      <button id="delete-confirm" class="secondary-btn danger-button" type="button"><span data-i18n="Delete">Delete</span></button>
+    </div>
+  </dialog>
   <script src="/assets/i18n.js"></script>
   <script src="/assets/controls.js"></script>
   <script src="/assets/player.js"></script>
   <script src="/assets/script-editor.js"></script>
   <script src="/assets/app.js"></script>
+  <script src="/assets/cleanup.js"></script>
   <script src="/assets/references.js"></script>
   <script src="/assets/audio-editor.js"></script>
   <script src="/assets/studio.js"></script>

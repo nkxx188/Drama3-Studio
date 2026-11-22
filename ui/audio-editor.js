@@ -26,7 +26,7 @@
   const singleText = value => value.replace(/^\s*<\|speaker:\d+\|>\s*/, '')
     .replace(/^Direction:[^\n]*\nLine:\s*/i, '');
   function persist() {
-    clearTimeout(timer);
+    clearTimeout(timer); timer = null;
     const body = JSON.stringify({ key: 'audio_editor', value: copy(saved) });
     saving = saving.catch(() => {}).then(() => api('/api/studio/draft', {
       method: 'POST', keepalive: new Blob([body]).size < 60000, body,
@@ -390,6 +390,7 @@
       document.removeEventListener('drama:resourceschange', onCapabilities);
       document.removeEventListener('drama:languagechange', onLanguage);
       document.removeEventListener('drama:jobupdate', onJob);
+      document.removeEventListener('drama:jobsdeleted', onJobsDeleted);
       document.removeEventListener('drama:jobsubmitted', onSubmitted);
       if (active === context) active = null;
       for (const reference of Object.values(draft.whole.references)) ReferencePrep.cancel(reference);
@@ -723,6 +724,20 @@
       }
     }
     const onCapabilities = () => refresh();
+    const onJobsDeleted = event => {
+      if (event.detail.has(source.job_id)) {
+        cleanup(); hooks.clearRememberedSource?.();
+        if (hooks.currentView?.() === 'audio-edit') hooks.leaveEditor?.(returnView);
+        return;
+      }
+      if (!context.result || !event.detail.has(context.result.id)) return;
+      clearTimeout(context.pollTimer);
+      delete draft.result_job_id; context.result = null; context.busy = false;
+      resultBox.querySelectorAll('audio').forEach(audio => audio.pause());
+      resultBox.replaceChildren(); delete resultBox.dataset.jobId;
+      results.hidden = true;
+      refresh();
+    };
     const onLanguage = () => { drawMatches(); drawResult(); refresh(); };
     const onJob = () => refresh();
     const onSubmitted = event => {
@@ -733,14 +748,21 @@
     document.addEventListener('drama:resourceschange', onCapabilities);
     document.addEventListener('drama:languagechange', onLanguage);
     document.addEventListener('drama:jobupdate', onJob);
+    document.addEventListener('drama:jobsdeleted', onJobsDeleted);
     document.addEventListener('drama:jobsubmitted', onSubmitted);
     for (const other of document.querySelectorAll('audio')) other.pause();
     ScriptEditor.mount(replacement); changeMode(draft.mode); StudioAudio.enhance(body);
     if (draft.result_job_id) trackResult({ id: draft.result_job_id, status: 'queued' });
     workspace.scrollIntoView({ block: 'start', behavior: 'smooth' }); workspace.focus({ preventScroll: true });
   }
+  document.addEventListener('drama:jobsdeleted', ({ detail: ids }) => {
+    for (const draft of Object.values(saved.entries)) {
+      if (ids.has(draft.result_job_id)) delete draft.result_job_id;
+    }
+  });
   window.AudioEditor = Object.freeze({
     configure(value, draft) { hooks = value; if (draft?.entries) saved = copy(draft); },
+    flushDraft() { return timer ? persist() : saving; },
     open,
     async restoreActive() {
       let source, returnView;

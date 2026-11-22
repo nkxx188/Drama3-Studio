@@ -109,6 +109,14 @@ def _inside(path: Path, parent: Path) -> Path:
     return path
 
 
+def _voice_id(value):
+    if (not isinstance(value, str) or not value or len(value) > 100
+            or value != value.strip(" .")
+            or any(not (character.isalnum() or character in "-_. ") for character in value)):
+        raise ValueError("Invalid voice id")
+    return value
+
+
 def inspect_model(path):
     return inspect_gguf(path) if is_gguf(path) else inspect_checkpoint(path)
 
@@ -1361,7 +1369,9 @@ class AppState:
             raise ValueError("Studio work does not exist")
         if not 0 <= offset <= 100000 or not 1 <= limit <= 100:
             raise ValueError("Invalid work history page")
-        identifiers = list(dict.fromkeys(identifier for part in work["segments"] for identifier in part["versions"]))
+        removed = self.studio.removed("jobs")
+        identifiers = list(dict.fromkeys(identifier for part in work["segments"]
+                                         for identifier in part["versions"] if identifier not in removed))
         rows, missing = [], []
         for identifier in identifiers[offset:offset + limit]:
             job = self.job(identifier)
@@ -1575,15 +1585,198 @@ class AppState:
                 value["timing"] = self._job_clocks[job_id].snapshot()
             return None if value is None else json.loads(json.dumps(value))
 
-    def jobs(self):
+    def job_page(self, *, before=None):
+        if before is not None and (not isinstance(before, (list, tuple)) or len(before) != 2
+                                   or not isinstance(before[0], (float, int))
+                                   or not math.isfinite(before[0]) or not isinstance(before[1], str)):
+            raise ValueError("Invalid history cursor")
+        order = lambda job: (job["created_at"], job["id"])
+        cursor = tuple(before) if before is not None else None
         with self._jobs_lock:
             for job_id, clock in self._job_clocks.items():
                 if job_id in self._jobs:
                     self._jobs[job_id]["timing"] = clock.snapshot()
-            values = [job for job in self._jobs.values()
-                      if job.get("mode") != "audio_import" or job.get("status") in ("queued", "running")]
-        values.sort(key=lambda item: item["created_at"], reverse=True)
-        return [json.loads(json.dumps(value)) for value in values[:100]]
+            removed = self.studio.removed("jobs")
+            values = [job for identifier, job in self._jobs.items() if identifier not in removed
+                      and (cursor is None or order(job) < cursor)
+                      and (job.get("mode") != "audio_import" or job.get("status") in ("queued", "running"))]
+            values.sort(key=order, reverse=True)
+            return {"jobs": clone(values[:100]),
+                    "next_cursor": order(values[99]) if len(values) > 100 else None}
+
+    def jobs(self):
+        return self.job_page()["jobs"]
+
+    def _asset_owner(self, value):
+        if not isinstance(value, (str, Path)) or not value:
+            return None
+        if isinstance(value, str) and value.startswith("/files/"):
+            value = ROOT / unquote(value.removeprefix("/files/"))
+        path = Path(os.path.abspath(value))
+        for kind, root in (("jobs", self.jobs_root), ("voices", self.voices_root)):
+            root = root.absolute()
+            if path.is_relative_to(root) and path != root:
+                return kind, path.relative_to(root).parts[0]
+        return None
+
+    def _record_dependencies(self, value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "job_id" and isinstance(child, str):
+                    yield "jobs", child
+                elif key in ("voice_id", "voiceId", "libraryId") and isinstance(child, str):
+                    yield "voices", child
+                elif key in ("voices", "voice_ids") and isinstance(child, list):
+                    yield from (("voices", item) for item in child if isinstance(item, str))
+                elif key in ("audio", "audio_url", "audio_path", "path", "output", "take_file", "native_take_file",
+                             "source_audio", "encoded_audio",
+                             "previous_take", "source_take", "previous-take", "source-take", "take_files"):
+                    for path in child if isinstance(child, list) else [child]:
+                        owner = self._asset_owner(path)
+                        if owner:
+                            yield owner
+                if isinstance(child, (dict, list)):
+                    yield from self._record_dependencies(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from self._record_dependencies(child)
+
+    def _job_dependencies(self, job):
+        recipe = job.get("recipe") or {}
+        if "reference_snapshot" in recipe:
+            # A frozen recipe reads the saved audio paths, even if old picker IDs remain in the recipe.
+            recipe = {key: value for key, value in recipe.items() if key not in ("voice_ids", "voice_bindings")}
+        yield from self._record_dependencies(recipe)
+        for key in ("output", "take_file", "result", "events"):
+            yield from self._record_dependencies({key: job.get(key)})
+
+    def _record_directory(self, kind, identifier):
+        (record_id if kind == "jobs" else _voice_id)(identifier)
+        root = self.data_root.resolve() / kind
+        folder = root / identifier
+        if root.resolve() != root or folder.resolve() != folder or folder.parent != root:
+            raise ValueError("Invalid local record directory")
+        return folder
+
+    def _collect_removed_records(self):
+        removed = {kind: self.studio.removed(kind) for kind in ("jobs", "voices")}
+        if not any(removed.values()):
+            return
+        candidates = {(kind, identifier) for kind, identifiers in removed.items() for identifier in identifiers}
+        # Windows paths can refer to the same record with different casing.
+        identifier_key = os.path.normcase
+        selected = {(kind, identifier_key(identifier)): (kind, identifier) for kind, identifier in candidates}
+        required = set()
+        for identifier, job in self._jobs.items():
+            if identifier not in removed["jobs"]:
+                required.update(self._job_dependencies(job))
+        with self.studio.lock:
+            for key, draft in self.studio.data["drafts"].items():
+                value = draft["value"]
+                if key == "audio_editor" and isinstance(value.get("entries"), dict):
+                    # These drafts can only be reopened from their source result.
+                    for name, entry in value["entries"].items():
+                        source = name.partition(":")[0]
+                        if source in self._jobs and source not in removed["jobs"]:
+                            required.update(self._record_dependencies(entry))
+                else:
+                    required.update(self._record_dependencies(value))
+        with self._reference_prewarm_lock:
+            audio = [ref.audio for task in self._reference_prewarm_tasks.values()
+                     if task["status"] in ("queued", "running") for ref in task["references"]]
+        required.update(filter(None, map(self._asset_owner, audio + self.asr.pending_audio())))
+
+        # Follow references from retained results through any removed results they still need.
+        while required:
+            kind, identifier = required.pop()
+            candidate = selected.pop((kind, identifier_key(identifier)), None)
+            if candidate is None:
+                continue
+            candidates.remove(candidate)
+            kind, identifier = candidate
+            if kind == "jobs" and identifier in self._jobs:
+                required.update(self._job_dependencies(self._jobs[identifier]))
+
+        purged = {"jobs": set(), "voices": set()}
+        trash = self.data_root.resolve() / ".pending-delete"
+        for kind, identifier in sorted(candidates):
+            try:
+                folder = self._record_directory(kind, identifier)
+                if folder.exists():
+                    if trash.resolve() != trash:
+                        raise ValueError("Invalid cleanup directory")
+                    trash.mkdir(exist_ok=True)
+                    folder.rename(trash / uuid.uuid4().hex)
+            except (OSError, ValueError):
+                detail("Could not remove %s record %s yet", kind, identifier, exc_info=True)
+                continue
+            purged[kind].add(identifier)
+            if kind == "jobs":
+                self._jobs.pop(identifier, None)
+                self._job_persist_times.pop(identifier, None)
+        try:
+            self.studio.forget_removed(purged["jobs"], purged["voices"])
+        except OSError:
+            detail("Could not compact the removed record index", exc_info=True)
+
+    def retry_record_cleanup(self):
+        with self._engine_lock, self._jobs_lock, self.studio.lock:
+            self._collect_removed_records()
+        self._empty_cleanup_directory()
+
+    def _empty_cleanup_directory(self):
+        trash = self.data_root.resolve() / ".pending-delete"
+        try:
+            if not trash.is_dir() or trash.resolve() != trash:
+                return
+            folders = list(trash.iterdir())
+        except OSError:
+            detail("Could not read the pending cleanup directory", exc_info=True)
+            return
+        for folder in folders:
+            try:
+                if not re.fullmatch(r"[a-f0-9]{32}", folder.name) or folder.resolve() != folder:
+                    continue
+                shutil.rmtree(folder)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                detail("Could not reclaim %s yet", folder, exc_info=True)
+
+    def delete_records(self, kind, identifiers):
+        validate = {"jobs": record_id, "voices": _voice_id}[kind]
+        if not isinstance(identifiers, list) or not identifiers or len(identifiers) > 10000:
+            raise ValueError("Select records to delete")
+        identifiers = set(map(validate, identifiers))
+        with self._engine_lock, self._jobs_lock, self.studio.lock:
+            busy = {identifier for identifier in identifiers if kind == "jobs" and (
+                self._jobs.get(identifier, {}).get("status") in ("queued", "running")
+                or identifier in self._job_clocks)}
+            deleted = identifiers - busy
+            known = self._jobs if kind == "jobs" else {
+                folder.name for folder in self.voices_root.iterdir() if (folder / "voice.json").is_file()}
+            self.studio.remove_from_list(kind, deleted.intersection(known) - self.studio.removed(kind))
+            self._collect_removed_records()
+            retained = self.list_voices(retained=True) if kind == "voices" else []
+        self._empty_cleanup_directory()
+        result = {"deleted": sorted(deleted), "busy": sorted(busy)}
+        if kind == "voices":
+            result["retained"] = retained
+        return result
+
+    def save_draft(self, key, value):
+        with self._jobs_lock, self.studio.lock:
+            removed = self.studio.removed("jobs")
+            StudioStore.clear_results(value, lambda identifier: identifier in removed or identifier not in self._jobs)
+            previous = self.studio.data["drafts"].get(key, {}).get("value")
+            saved = self.studio.save_draft(key, value)
+            removed_voices = self.studio.removed("voices")
+            released = (removed or removed_voices) and any(
+                identifier in (removed if kind == "jobs" else removed_voices)
+                for kind, identifier in set(self._record_dependencies(previous)) - set(self._record_dependencies(value)))
+        if released:
+            self.retry_record_cleanup()
+        return saved
 
     def cancel(self, job_id):
         with self._jobs_lock:
@@ -1664,8 +1857,7 @@ class AppState:
             return self._engine
 
     def _voice(self, voice_id: str) -> dict:
-        if not isinstance(voice_id, str) or not voice_id:
-            raise ValueError("Invalid voice id")
+        _voice_id(voice_id)
         path = _inside(self.voices_root / voice_id, self.voices_root)
         metadata_path = path / "voice.json"
         if not metadata_path.is_file():
@@ -1683,10 +1875,11 @@ class AppState:
         return {**metadata, "id": voice_id, "audio_path": references[0]["audio_path"],
                 "audio_url": references[0]["audio_url"], "references": references}
 
-    def list_voices(self):
+    def list_voices(self, *, retained=False):
         result = []
+        removed = self.studio.removed("voices")
         for path in sorted(self.voices_root.iterdir()):
-            if not path.is_dir() or not (path / "voice.json").is_file():
+            if (path.name in removed) != retained or not path.is_dir() or not (path / "voice.json").is_file():
                 continue
             try:
                 result.append(self._voice(path.name))
@@ -2002,6 +2195,11 @@ class AppState:
         return result
 
     def start_transcription(self, payload):
+        # Queue the reader before cleanup checks which reference files are still in use.
+        with self._engine_lock:
+            return self._start_transcription(payload)
+
+    def _start_transcription(self, payload):
         if not isinstance(payload, dict):
             raise ValueError("Transcription payload must be an object")
         if bool(payload.get("upload_id")) == bool(payload.get("voice_id")):
@@ -2589,9 +2787,9 @@ class AppState:
             if stream is not None:
                 job["stream_input"]["pending"] = stream.pending
             self._persist_job_locked(job_id)
-        self.studio.first_completed(self.job(job_id))
-        self._event(job_id, {"stage": status, "output": result.get("output")})
-        self._report_result(job_id)
+            self.studio.first_completed(self.job(job_id))
+            self._event(job_id, {"stage": status, "output": result.get("output")})
+            self._report_result(job_id)
 
     def _report_result(self, job_id):
         job = self.job(job_id)
@@ -2771,7 +2969,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/model/task":
                 return self._json(200, {"task": STATE.model_installation.snapshot()})
             if path == "/api/voices":
-                return self._json(200, {"voices": STATE.list_voices()})
+                return self._json(200, {"voices": STATE.list_voices(),
+                                        "retained": STATE.list_voices(retained=True)})
             if path.startswith("/api/reference-prewarm/"):
                 task_id = path.removeprefix("/api/reference-prewarm/")
                 task = STATE.reference_prewarm(task_id)
@@ -2790,7 +2989,8 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/transcriptions/"):
                 return self._json(200, STATE.asr.get(path.removeprefix("/api/transcriptions/")))
             if path == "/api/jobs":
-                return self._json(200, {"jobs": STATE.jobs()})
+                before = parse_qs(parsed.query).get("before", ["null"])[0]
+                return self._json(200, STATE.job_page(before=json.loads(before)))
             if path.startswith("/api/jobs/"):
                 job_id = path.removeprefix("/api/jobs/")
                 job = STATE.job(job_id)
@@ -2857,6 +3057,13 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         try:
+            if path in ("/api/voices/delete", "/api/jobs/delete"):
+                if self.headers.get_content_type() != "application/json":
+                    return self._json(415, {"error": "Expected a JSON request"})
+                payload = self._payload()
+                if not isinstance(payload, dict):
+                    raise ValueError("Select records to delete")
+                return self._json(200, STATE.delete_records(path.split("/")[2], payload.get("ids")))
             if path == "/api/jobs":
                 job_id = STATE.create_job(self._payload())
                 return self._json(202, {"id": job_id})
@@ -2887,7 +3094,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, STATE.scene_context_status(self._payload()))
             if path == "/api/studio/draft":
                 payload = self._payload()
-                return self._json(200, STATE.studio.save_draft(payload["key"], payload["value"]))
+                return self._json(200, STATE.save_draft(payload["key"], payload["value"]))
             if path == "/api/studio/version":
                 return self._json(200, STATE.version(self._payload()))
             if path == "/api/studio/adopt":
@@ -3007,6 +3214,7 @@ def serve(httpd, *, open_browser=False):
                 threading.Timer(
                     0.35, lambda: webbrowser.open(url)
                 ).start()
+            STATE.retry_record_cleanup()
             httpd.serve_forever()
         except KeyboardInterrupt:
             pass

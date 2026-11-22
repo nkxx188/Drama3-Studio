@@ -35,6 +35,7 @@ def main():
     parser.add_argument("--result-controls-checks", action="store_true")
     parser.add_argument("--generation-settings-checks", action="store_true")
     parser.add_argument("--draft-restore-checks", action="store_true")
+    parser.add_argument("--cleanup-checks", action="store_true")
     arguments = parser.parse_args()
     import numpy as np
     import soundfile as sf
@@ -49,7 +50,7 @@ def main():
     state = ui.STATE = ui.AppState(data_root=folder / "ui_data")
     state.asr.model_dir = folder / "missing-asr-model"
     checkpoint = next((path for directory in (
-        "drama-3-20261029-gguf-q8", "drama-3-gguf-q8",
+        "drama-3-20261029-gguf-q8-backbone-q8", "drama-3-20261029-gguf-q8", "drama-3-gguf-q8",
     ) for path in (ROOT / "checkpoints" / directory).glob("*.gguf")), None)
     if checkpoint is None:
         raise RuntimeError("Library UI acceptance requires a local Drama 3 GGUF checkpoint.")
@@ -87,6 +88,8 @@ def main():
             return self.references.get(str(path))
 
         def generate(self, text, output, **kwargs):
+            if arguments.cleanup_checks and text == "Failed fixture.":
+                raise RuntimeError("Synthetic generation failure")
             abnormal = False
             if arguments.generation_settings_checks and "retry-fixture" in text:
                 self.retry_calls[text] = self.retry_calls.get(text, 0) + 1
@@ -183,6 +186,7 @@ def main():
         result = subprocess.run(
             [shutil.which("node") or "node", str(ROOT / "tools" / (
                 "validate_audio_import_ui.cjs" if arguments.audio_import_checks else
+                "validate_cleanup_ui.cjs" if arguments.cleanup_checks else
                 "validate_draft_restore_ui.cjs" if arguments.draft_restore_checks else
                 "validate_generation_settings_ui.cjs" if arguments.generation_settings_checks else
                 "validate_reference_switch_ui.cjs" if arguments.reference_switch_checks else
