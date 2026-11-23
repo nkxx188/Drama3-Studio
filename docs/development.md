@@ -1,6 +1,6 @@
 # 开发与构建
 
-本页面向需要修改源码或重新构建一键包的开发者。普通使用者请使用完整的 Windows NVIDIA 一键包。
+本页面向需要修改源码或重新构建运行包的开发者。普通使用者请使用完整的 Windows 一键包，或按 [Linux 指南](linux.md) 构建 Linux 运行库。
 
 ## 目录
 
@@ -14,6 +14,7 @@
 | `tools/` | 启动、构建、打包和开发检查脚本 |
 | `tests/` | 单元与集成测试 |
 | `requirements-windows.lock.txt` | 已验证 Windows Python 环境的依赖版本 |
+| `requirements-linux.lock.txt` | 已验证 Linux Python 环境的依赖版本（使用上游 triton） |
 
 `vendor`、`runtime`、`checkpoints`、`dist`、缓存、研究输出和用户数据不提交到 Git。`src/drama_low_vram/data/control-head.safetensors` 是下载器需要的 4 KiB 配套数据，作为特例保留，并由 CI 校验 SHA256；完整模型权重仍排除。
 
@@ -75,6 +76,20 @@ cd ..\..
 ```powershell
 .\.venv\Scripts\python.exe tools\build_native.py
 ```
+
+## 构建 Linux NVIDIA 原生运行库
+
+Linux 脚本与 Windows 使用同一固定的 audio.cpp 提交、CUDA 目标列表和编译参数，仅将产物改为 ELF worker 加随包的 CUDA 动态库：
+
+```bash
+bash tools/setup-linux.sh
+.venv/bin/python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda-13.2
+./start.sh
+```
+
+`build_linux_runtime.py` 校验补丁、恢复固定源码、构建 `drama3_worker`，通过 `ldd` 收集实际依赖的 CUDA `.so`，写入 `runtime/native/manifest-linux.json` 与 `research/phase37-linux-build.json`，最后用 `--probe` 验证 GPU。运行时只需 NVIDIA 驱动，不需要系统 CUDA 工具包。发行版依赖、运行目录和排查方法见 [Linux 指南](linux.md)。
+
+可选的 CPU 实验模块同样使用 `tools/build_native.py`，在 Linux 上生成 `libdrama_native.so`。
 
 ## 打包 Windows 一键包
 

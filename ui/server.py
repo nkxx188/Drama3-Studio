@@ -1,4 +1,4 @@
-"""Local Windows interface for the validated Drama 3 engine.
+"""Local Web UI for the validated Drama 3 engine.
 
 The server is deliberately dependency-light: Python's standard library serves
 the UI and serializes GPU jobs, while the existing engine remains the only
@@ -43,6 +43,7 @@ for key, folder in (
     ("HF_HOME", "huggingface"),
     ("TEMP", "tmp"),
     ("TMP", "tmp"),
+    ("TMPDIR", "tmp"),
 ):
     target = ROOT / ".cache" / folder
     target.mkdir(parents=True, exist_ok=True)
@@ -121,9 +122,51 @@ def inspect_model(path):
     return inspect_gguf(path) if is_gguf(path) else inspect_checkpoint(path)
 
 
+def _native_path_text(value):
+    """Normalize a path saved by a Windows copy so POSIX can resolve it."""
+    text = os.fspath(value)
+    if os.name == "nt":
+        return text
+    text = text.replace("\\", "/")
+    if re.match(r"^[A-Za-z]:/", text):
+        text = text[2:]
+    return text
+
+
+def _rebind_project_path(value, *, folder=None):
+    """Rebind a saved Windows/moved path to this copy's local files.
+
+    Only paths that still exist locally are rewritten; unknown paths are kept
+    unchanged so the UI can report them as missing rather than silently
+    pointing at a different model.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return value
+    text = _native_path_text(value)
+    candidate = Path(text)
+    if candidate.is_file() or candidate.is_dir():
+        return str(candidate) if candidate.is_absolute() else str((ROOT / candidate).resolve())
+    normalized = text.replace("\\", "/")
+    for marker in ("ui_data/", "outputs/", "checkpoints/"):
+        index = normalized.rfind("/" + marker)
+        if index >= 0:
+            local = (ROOT / normalized[index + 1:]).resolve()
+            if local.exists() and local.is_relative_to(ROOT):
+                return str(local)
+    if folder is not None:
+        local = (Path(folder) / candidate.name).resolve()
+        if local.is_file():
+            return str(local)
+    return value
+
+
 def _portable_checkpoint_path(path):
-    """Rebind a moved package's stale absolute model paths to its local pool."""
-    path = model_directory(path)
+    """Rebind a moved package's stale Windows/absolute model paths to its pool."""
+    text = _native_path_text(path)
+    try:
+        path = model_directory(text)
+    except ValueError:
+        return Path(text)
     if path.exists():
         return path
     parts = path.parts
@@ -131,8 +174,12 @@ def _portable_checkpoint_path(path):
         if parts[index].casefold() != "checkpoints":
             continue
         previous_root = Path(*parts[:index])
-        if not ((previous_root / "ui/server.py").is_file()
-                and (previous_root / "src/drama_low_vram").is_dir()):
+        local_root = ((previous_root / "ui/server.py").is_file()
+                      and (previous_root / "src/drama_low_vram").is_dir())
+        # A Windows drive/old package name cannot be probed as a real folder on
+        # another OS. Treat a recognizable package name as the same anchor.
+        moved_root = any(part.casefold().startswith("drama3") for part in parts[:index])
+        if not (local_root or moved_root):
             continue
         relative = Path(*parts[index + 1:]) if index + 1 < len(parts) else Path()
         candidate = (ROOT / "checkpoints" / relative).resolve()
@@ -238,6 +285,16 @@ class AppState:
                         summary = value.get("payload_summary") or {}
                         summary["text_length"] = _content_width(recipe["text"])
                         value["payload_summary"] = summary
+                    job_folder = path.parent
+                    if isinstance(value.get("output"), str):
+                        value["output"] = _rebind_project_path(
+                            value["output"], folder=job_folder)
+                    result = value.get("result")
+                    if isinstance(result, dict):
+                        for key in ("output", "take_file", "native_log"):
+                            if isinstance(result.get(key), str):
+                                result[key] = _rebind_project_path(
+                                    result[key], folder=job_folder)
                     was_active = value.get("status") in ("queued", "running")
                     value["status"] = (
                         "interrupted" if was_active

@@ -21,6 +21,18 @@ def git(directory, *arguments, check=True):
     return result
 
 
+def _patch_new_files(patch):
+    """List files the patch creates; they are reliable 'already applied' markers."""
+    names = []
+    current = None
+    for line in patch.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("diff --git "):
+            current = line.split(" b/", 1)[-1]
+        elif line.startswith("new file mode ") and current:
+            names.append(current)
+    return names
+
+
 def ensure_checkout(destination, repository, commit, patch):
     """Apply a pinned patch once; refuse to reset an existing checkout."""
     destination, patch = Path(destination).resolve(), Path(patch).resolve()
@@ -42,6 +54,12 @@ def ensure_checkout(destination, repository, commit, patch):
             "Keep or move your existing checkout before preparing a separate pinned copy."
         )
     if git(destination, "apply", "--reverse", "--check", str(patch), check=False).returncode == 0:
+        return "already prepared"
+    # A checkout copied from Windows may carry the patch plus later research
+    # edits and CRLF line endings. A strict reverse check then fails even though
+    # the patch is present. Files created by the patch cannot exist otherwise.
+    new_files = _patch_new_files(patch)
+    if new_files and all((destination / name).is_file() for name in new_files):
         return "already prepared"
     check = git(destination, "apply", "--check", str(patch), check=False)
     if check.returncode:

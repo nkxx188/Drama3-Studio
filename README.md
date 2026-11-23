@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**Run Fish Audio Drama 3 locally on Windows for speech generation, voice cloning, multi-speaker dialogue, and audio editing.**
+**Run Fish Audio Drama 3 locally on Windows or Linux for speech generation, voice cloning, multi-speaker dialogue, and audio editing.**
 
 Built with Fish Audio.
 
@@ -85,6 +85,18 @@ When you are done generating for a while, click the plug icon to the left of Ref
 Models, voices, drafts, generation history, and caches are stored locally. Before updating, back up your `checkpoints`, `ui_data`, and `outputs` folders, then follow the release instructions to update the application files.
 
 The launcher window shows service and task status; detailed logs are stored under `diagnostics`. For troubleshooting, export diagnostics from Settings or run `start.bat --diagnostics` in a terminal.
+
+## Linux
+
+Linux uses the same application, UI and CUDA worker as Windows. Install Python 3.12, CMake, Ninja and a CUDA 13.x toolkit, then:
+
+```bash
+bash tools/setup-linux.sh
+.venv/bin/python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda-13.2
+./start.sh
+```
+
+The worker is built from the same pinned source and flags as the Windows binary, so inference performance is unchanged. At run time only the NVIDIA driver is needed; the bundled CUDA libraries live in `runtime/native` and are selected by `manifest-linux.json`. See the [Linux guide](docs/linux.md) for distribution-specific packages, layout and troubleshooting.
 
 ## Run from Source and Build
 

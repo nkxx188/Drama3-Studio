@@ -107,7 +107,7 @@ def main():
         with (out / "native.log").open("wb") as log:
             child = subprocess.Popen(
                 command, cwd=build["source"], env=env, stdout=log, stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NO_WINDOW)
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             observed = psutil.Process(child.pid)
             try:
                 while child.poll() is None:

@@ -1,4 +1,4 @@
-"""Memory-aware Drama 3 model loading on native Windows CUDA."""
+"""Memory-aware Drama 3 model loading on native CUDA."""
 
 from __future__ import annotations
 

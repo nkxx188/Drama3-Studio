@@ -1,4 +1,8 @@
-"""One Windows entry point: open Studio, reuse its server and keep failures visible."""
+"""One portable entry point: open Studio, reuse its server and keep failures visible.
+
+Kept under the original filename so the Windows launcher and its acceptance
+tests continue to work unchanged; ``start.sh`` uses this same module on Linux.
+"""
 
 import argparse
 from contextlib import contextmanager
@@ -28,11 +32,15 @@ def instance_key(root):
 
 
 def configure_environment():
-    for key, name in (("TEMP", "tmp"), ("TMP", "tmp"), ("HF_HOME", "huggingface"),
+    temp_keys = ("TEMP", "TMP") if os.name == "nt" else ("TMPDIR", "TMP", "TEMP")
+    for key, name in ((temp_keys[0], "tmp"), ("HF_HOME", "huggingface"),
                       ("TRITON_CACHE_DIR", "triton"), ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
                       ("TORCH_EXTENSIONS_DIR", "torch_extensions"), ("CUDA_CACHE_PATH", "cuda")):
         folder = ROOT / ".cache" / name
         folder.mkdir(parents=True, exist_ok=True)
+        os.environ[key] = str(folder)
+    folder = ROOT / ".cache/tmp"
+    for key in temp_keys[1:]:
         os.environ[key] = str(folder)
     os.environ["PYTHONUTF8"] = "1"
     os.environ["HF_HUB_CACHE"] = str(ROOT / ".cache/huggingface/hub")
@@ -65,22 +73,8 @@ def ui_url(host, port):
 
 def probe_instance(host, port):
     """A cheap app identity check; never invoke CUDA or trust another port's health API."""
-    host = browser_host(host)
+    request = Request(ui_url(host, port) + "api/instance", headers={"Connection": "close"})
     try:
-        # Winsock can spend a full timeout on each closed port. Binding first
-        # lets local launches skip unused ports without waiting for a connection.
-        if host in ("127.0.0.1", "::1"):
-            import socket
-            with socket.socket(socket.AF_INET6 if host == "::1" else socket.AF_INET) as listener:
-                if os.name == "nt":
-                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-                try:
-                    listener.bind((host, port))
-                except OSError:
-                    pass
-                else:
-                    return False
-        request = Request(ui_url(host, port) + "api/instance", headers={"Connection": "close"})
         # Local startup must not depend on the user's proxy settings.
         with build_opener(ProxyHandler({})).open(request, timeout=0.3) as response:
             value = json.loads(response.read(8192))
@@ -155,8 +149,6 @@ def reopen(url, *, open_browser):
 
 
 def run_ui(args):
-    if os.environ.pop("DRAMA_STARTUP_ANNOUNCED", None) != "1":
-        print("Starting Drama 3 Studio...", flush=True)
     existing = existing_instance(args.host, args.port)
     if existing:
         reopen(existing, open_browser=args.open_browser)
@@ -176,6 +168,7 @@ def run_ui(args):
         if existing:
             reopen(existing, open_browser=args.open_browser)
             return
+        print("Starting Drama 3 Studio...", flush=True)
         from drama_low_vram.studio_logging import console_session, detail, status
         with console_session(ROOT):
             detail("Starting Drama 3 Studio")
@@ -264,6 +257,11 @@ if __name__ == "__main__":
             traceback.print_exc()
         print(f"Startup failed: {type(error).__name__}: {error}", file=sys.stderr)
         if isinstance(error, ModuleNotFoundError):
-            print("The Python runtime is incomplete. Re-extract the complete Windows package.", file=sys.stderr)
+            if os.name == "nt":
+                print("The Python runtime is incomplete. Re-extract the complete Windows package.",
+                      file=sys.stderr)
+            else:
+                print("The Python runtime is incomplete. Run tools/setup-linux.sh "
+                      "(see docs/linux.md).", file=sys.stderr)
         print(f"Details: {ROOT / 'diagnostics/launcher-error.log'}", file=sys.stderr)
         raise SystemExit(1)

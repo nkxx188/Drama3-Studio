@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-**在 Windows 本地使用 Fish Audio Drama 3，完成语音生成、声音克隆、多人对话和音频编辑。**
+**在 Windows 或 Linux 本地使用 Fish Audio Drama 3，完成语音生成、声音克隆、多人对话和音频编辑。**
 
 Built with Fish Audio.
 
@@ -85,6 +85,18 @@ Drama3 Studio/
 模型、音色、草稿、生成记录和缓存保存在本地。更新前备份自己的 `checkpoints`、`ui_data` 和 `outputs`，再按发布说明更新程序文件。
 
 启动窗口显示服务和任务状态；详细日志保存在 `diagnostics`。遇到问题时，可在设置页导出诊断日志，或在终端执行 `start.bat --diagnostics`。
+
+## Linux 运行
+
+Linux 版与 Windows 使用完全相同的程序、界面和 CUDA 原生后端。准备好 Python 3.12、CMake、Ninja 和 CUDA 13.x 工具包后：
+
+```bash
+bash tools/setup-linux.sh
+.venv/bin/python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda-13.2
+./start.sh
+```
+
+原生后端采用与 Windows 版本相同的固定源码和编译参数，推理性能保持一致。运行时只需 NVIDIA 驱动；CUDA 动态库随程序放在 `runtime/native`，由 `manifest-linux.json` 描述。各发行版的依赖安装、目录结构和排查方法见 [Linux 指南](docs/linux.md)。
 
 ## 从源码运行与构建
 

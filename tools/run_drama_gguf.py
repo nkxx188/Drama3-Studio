@@ -1,4 +1,4 @@
-"""Experimental native Windows GGUF entry for verified local Q4/Q8 packages."""
+"""Experimental native GGUF entry for verified local Q4/Q8 packages."""
 
 import argparse
 import json

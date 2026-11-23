@@ -1,4 +1,4 @@
-"""Small capability policy shared by Python and native Windows entry points."""
+"""Small capability policy shared by Python and native entry points."""
 
 from dataclasses import asdict, dataclass
 

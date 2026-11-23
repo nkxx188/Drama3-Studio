@@ -1,6 +1,7 @@
 """Local startup diagnostics and a bounded, user-exportable support archive."""
 
 import json
+import os
 from pathlib import Path
 import platform
 import sys
@@ -72,9 +73,12 @@ def export(root, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("diagnostics.json", json.dumps(snapshot(root), ensure_ascii=False, indent=2))
-        manifest = root / "runtime/native/manifest.json"
-        if manifest.is_file():
-            archive.write(manifest, "native-manifest.json")
+        names = ("manifest-linux.json", "manifest.json") if os.name != "nt" else ("manifest.json",)
+        for name in names:
+            manifest = root / "runtime/native" / name
+            if manifest.is_file():
+                archive.write(manifest, "native-manifest.json")
+                break
         launch_error = root / "diagnostics/launcher-error.log"
         if launch_error.is_file():
             with launch_error.open("rb") as stream:
