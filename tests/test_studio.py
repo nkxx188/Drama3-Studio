@@ -442,6 +442,48 @@ def test_composition_has_exact_pcm_order_and_frozen_resolved_manifest(state):
     assert json.loads(Path(result["output"]).with_name("composition.json").read_text()) == manifest
 
 
+def test_edited_dialogue_line_reassembles_and_keeps_prior_line_edits(state):
+    engine = DistinctNative()
+    state._get_engine = lambda _: engine
+    original = state.create_job(dialogue("per_line"))
+    run_latest(state)
+    original_job = state.job(original)
+
+    def edit(source_job, index, line_id, text):
+        version = state.version({"job_id": source_job, "part_index": index})
+        job_id = state.create_job({
+            "source_version": {"job_id": source_job, "part_index": index},
+            "operation": "infill", "text": f"<|speaker:{index % 2}|> {text}",
+            "start_frame": 1, "end_frame": 2,
+            "studio": {**version["studio"], "layout": "scene", "line_id": line_id,
+                       "result_scope": "audio_editor", "edit_source": f"{source_job}:{index}"},
+        })
+        run_latest(state)
+        return job_id
+
+    first_edit = edit(original, 1, "second", "Second revised.")
+    first_composition = state.reassemble_dialogue({"job_id": first_edit})
+    assert first_composition["result"]["segments"][1]["text"] == "Second revised."
+    assert first_composition["result"]["segments"][1]["source_version"] == {"job_id": first_edit}
+    assert state.studio.snapshot()["works"]["work"]["segments"][0]["adopted"] == {
+        "job_id": first_composition["id"]}
+
+    second_edit = edit(first_composition["id"], 2, "third", "Third revised.")
+    calls = len(engine.calls)
+    second_composition = state.reassemble_dialogue({"job_id": second_edit})
+    rows = second_composition["result"]["segments"]
+    assert [row["text"] for row in rows] == ["First.", "Second revised.", "Third revised."]
+    assert rows[1]["source_version"] == {"job_id": first_edit}
+    assert rows[2]["source_version"] == {"job_id": second_edit}
+    paths = [original_job["result"]["segments"][0]["path"],
+             state.job(first_edit)["output"], state.job(second_edit)["output"]]
+    expected = np.concatenate([sf.read(path, dtype="int16")[0] for path in paths])
+    actual, rate = sf.read(second_composition["output"], dtype="int16")
+    assert rate == 44100 and np.array_equal(actual, expected)
+    assert state.reassemble_dialogue({"job_id": second_edit})["id"] == second_composition["id"]
+    assert len(engine.calls) == calls and state.job(original) == original_job
+
+
 def test_failed_scene_keeps_completed_takes_and_can_export_after_line_repair(state):
     class FailingNative(DistinctNative):
         def generate(self, text, output, **kwargs):

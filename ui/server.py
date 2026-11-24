@@ -944,7 +944,7 @@ class AppState:
         payload["scene_order"] = clone(payload["line_ids"])
         AppState._scene_script(payload)
 
-    def version(self, payload):
+    def version(self, payload, *, read_take=True):
         job = self.job(payload.get("job_id"))
         if not job:
             raise ValueError("Source version does not exist")
@@ -973,8 +973,17 @@ class AppState:
             index = 0
         if index is not None:
             row = self._scene_row(job, index)
+            line_id = self._scene_line_id(job, row, index)
+            can_reassemble = bool(job.get("studio") and self._is_per_line_dialogue(job))
+            if media_source := row.get("source_version"):
+                value = self.version(media_source, read_take=read_take)
+                value.setdefault("media_source", media_source)
+                value.update(job_id=job["id"], part_index=index, line_id=line_id,
+                             studio={**job["studio"], "line_id": line_id},
+                             can_reassemble_dialogue=can_reassemble)
+                return value
             value.update(output=row.get("path"), take_file=row.get("take_file"),
-                         part_index=index, line_id=self._scene_line_id(job, row, index))
+                         part_index=index, line_id=line_id, can_reassemble_dialogue=can_reassemble)
             if value["take_file"]:
                 value["status"] = "complete"
             if value.get("studio"):
@@ -1006,7 +1015,7 @@ class AppState:
                 for field in ("chunks", "live_stream"):
                     recipe.pop(field, None)
                 value["complete_recipe"] = False
-        if value["take_file"]:
+        if value["take_file"] and read_take:
             try:
                 take = self.inspect_take(value["take_file"])
                 value["text"] = recipe.get("text", take["text"])
@@ -1155,8 +1164,13 @@ class AppState:
         return {"version": version, "references": self._prepare_reference_assets(snapshot)}
 
     @staticmethod
+    def _is_per_line_dialogue(job):
+        return (job.get("mode") == "scene" and not (job.get("studio") or {}).get("line_id")
+                and (job.get("result") or {}).get("strategy") == "per_line_tts")
+
+    @staticmethod
     def _scene_rows(job):
-        rows = job.get("result", {}).get("segments")
+        rows = (job.get("result") or {}).get("segments")
         if not rows:
             rows = [event for event in job.get("events", [])
                     if event.get("stage") == "segment" and event.get("take_file")]
@@ -1391,6 +1405,20 @@ class AppState:
         return {"jobs": rows, "missing": missing, "total": len(identifiers),
                 "next_offset": offset + limit if offset + limit < len(identifiers) else None}
 
+    def _scene_sources(self, job, choices):
+        """Resolve a per-line result in its saved script order."""
+        recipe = job.get("recipe") or {}
+        rows = {row.get("index", i): row for i, row in enumerate(self._scene_rows(job))}
+        for index in range(len(recipe.get("lines", [])) or len(rows)):
+            row = rows.get(index, {})
+            line_id = self._scene_line_id(job, row, index)
+            chosen = choices.get(line_id) or row.get("source_version")
+            if chosen is None:
+                if index not in rows:
+                    raise ValueError("Every dialogue line needs a completed version before export")
+                chosen = {"job_id": job["id"], "part_index": index}
+            yield line_id, chosen
+
     def export_work(self, payload):
         from drama_low_vram.codec import concatenate_wavs
         versions = payload.get("versions")
@@ -1415,21 +1443,12 @@ class AppState:
         for version, value in zip(versions, resolved):
             job = self.job(version["job_id"])
             context = job.get("studio") or {}
-            if (version.get("part_index") is None and job["mode"] == "scene"
-                    and not context.get("line_id")
-                    and job.get("result", {}).get("strategy") == "per_line_tts"):
+            if version.get("part_index") is None and self._is_per_line_dialogue(job):
                 work = self.studio.snapshot()["works"].get(context.get("work_id"), {})
                 segment = next((item for item in work.get("segments", [])
                                 if item["id"] == context.get("segment_id")), {})
                 choices = segment.get("line_versions", {})
-                rows = {row["index"]: row for row in job["result"]["segments"]}
-                line_ids = job.get("recipe", {}).get("line_ids", [])
-                count = len(job.get("recipe", {}).get("lines", [])) or len(rows)
-                for index in range(count):
-                    line_id = line_ids[index] if index < len(line_ids) else f"line-{index}"
-                    chosen = choices.get(line_id) or {"job_id": job["id"], "part_index": index}
-                    if index not in rows and line_id not in choices:
-                        raise ValueError("Every dialogue line needs a completed version before export")
+                for line_id, chosen in self._scene_sources(job, choices):
                     selected = self.version(chosen)
                     if selected["status"] != "complete" or not selected["output"]:
                         raise ValueError("Only completed audio can be exported")
@@ -1454,6 +1473,118 @@ class AppState:
                        ensure_ascii=False, indent=2), encoding="utf-8")
         return {"output": str(output), "audio_url": "/files/" + "/".join(
             quote(part) for part in output.relative_to(ROOT).parts)}
+
+    def reassemble_dialogue(self, payload):
+        import soundfile as sf
+        from drama_low_vram.codec import concatenate_wavs
+
+        if not isinstance(payload, dict):
+            raise ValueError("Expected a dialogue edit job ID")
+        edited_id = record_id(payload.get("job_id"))
+        with self._jobs_lock, self.studio.lock:
+            edited = self.job(edited_id) or {}
+            context = edited.get("studio") or {}
+            edited_recipe = edited.get("recipe") or {}
+            source = edited_recipe.get("source_version") or edited_recipe.get("legacy_source") or {}
+            if (context.get("result_scope") != "audio_editor" or edited.get("status") != "complete"
+                    or not edited.get("output") or source.get("part_index") is None):
+                raise ValueError("Choose a completed edit of a dialogue line.")
+            base = self.job(source["job_id"]) or {}
+            base_context = base.get("studio") or {}
+            if not self._is_per_line_dialogue(base):
+                raise ValueError("This result has no per-line dialogue to reassemble.")
+            work_id, segment_id = (base_context.get(key) for key in ("work_id", "segment_id"))
+            index = source["part_index"]
+            line_id = self._scene_line_id(base, self._scene_row(base, index), index)
+            if (not work_id or not segment_id or context.get("work_id") != work_id
+                    or context.get("segment_id") != segment_id or context.get("line_id") != line_id):
+                raise ValueError("Edited audio does not belong to this dialogue line.")
+
+            work = self.studio.data["works"].get(work_id, {})
+            segment = next((row for row in work.get("segments", []) if row["id"] == segment_id), {})
+            current = segment.get("adopted") or segment.get("scene_version") or {}
+            current_job = self._jobs.get(current.get("job_id"), {})
+            removed = self.studio.removed("jobs")
+            if edited_id in removed or base["id"] in removed:
+                raise ValueError("Some saved result files are missing.")
+            origin_id = base["result"].get("dialogue_source_id", base["id"])
+            # Keep prior replacements if another edit already reassembled this same result.
+            if (current.get("part_index") is None and current_job.get("id") not in removed
+                    and self._is_per_line_dialogue(current_job)
+                    and current_job["result"].get("dialogue_source_id") == origin_id):
+                base = current_job
+            replacement = {"job_id": edited_id}
+            choices = segment.get("line_versions", {}) if current.get("job_id") == base["id"] else {}
+            if (current.get("job_id") == base["id"] and not choices and base.get("output")
+                    and Path(base["output"]).is_file() and any(
+                        row.get("source_version") == replacement for row in self._scene_rows(base))):
+                return clone(base)
+            sources = list(self._scene_sources(base, {**choices, line_id: replacement}))
+            recipe = clone(base["recipe"])
+            if len(sources) != len(recipe.get("lines", [])) or line_id not in dict(sources):
+                raise ValueError("This result has no per-line dialogue to reassemble.")
+            recipe["line_ids"] = [identifier for identifier, _ in sources]
+            recipe["scene_order"] = clone(recipe["line_ids"])
+            studio = {"work_id": work_id, "segment_id": segment_id, "layout": "scene"}
+            recipe.update(studio=studio, operation="reassemble")
+            for field in ("source_version", "condition_source", "legacy_source"):
+                recipe.pop(field, None)
+
+            rows, files = [], []
+            position, rate = 0, 44100
+            speakers = {role["name"]: role["speaker"] for role in recipe["characters"]}
+            for offset, (line, (identifier, chosen)) in enumerate(zip(recipe["lines"], sources)):
+                selected = self.version(chosen, read_take=False)
+                if selected["status"] != "complete" or not selected["output"] or selected["audio_missing"]:
+                    raise ValueError("Every dialogue line needs a completed version before export")
+                path = _inside(Path(selected["output"]), self.jobs_root)
+                samples = sf.info(str(path)).frames
+                # Preserve the saved transcript, including tags, and use the edited wording for the new result.
+                line["text"] = re.sub(r"^\s*<\|speaker:\d+\|>\s*", "", selected["text"] or line["text"], count=1)
+                rows.append({
+                    "index": offset, "line_id": identifier, "character": line["character"],
+                    "speaker": speakers[line["character"]], "text": line["text"],
+                    "path": str(path), "take_file": selected["take_file"],
+                    "start_sample": position, "end_sample": position + samples,
+                    "start_seconds": position / rate, "end_seconds": (position + samples) / rate,
+                    "samples": samples, "sample_rate": rate,
+                    "history_sources": selected["recipe"].get("previous_sources", []),
+                    "source_version": selected.get("media_source", chosen),
+                })
+                files.append(path)
+                position += samples
+            self._scene_script(recipe)
+
+            job_id = uuid.uuid4().hex
+            output = self.jobs_root / job_id / "result.wav"
+            now = time.time()
+            job = {
+                "id": job_id, "mode": "scene", "status": "complete", "created_at": now,
+                "updated_at": now, "events": [], "output": str(output), "take_file": None,
+                "error": None, "recipe": recipe, "studio": studio,
+                "result": {"status": "complete", "strategy": "per_line_tts", "segments": rows,
+                           "dialogue_source_id": origin_id, "output": str(output),
+                           "audio": {"samples": position, "sample_rate": rate}},
+                "payload_summary": {"mode": "scene", "text_length": _content_width(recipe["text"]),
+                                    "reference_count": len(recipe.get("reference_snapshot", []))},
+            }
+            try:
+                concatenate_wavs(files, output, sample_rate=rate)
+                self._jobs[job_id] = job
+                self._persist_job_locked(job_id)
+                self.studio.register(job, adopt=True)
+            except (OSError, ValueError, RuntimeError):
+                self._jobs.pop(job_id, None)
+                self._job_persist_times.pop(job_id, None)
+                if output.parent.is_dir():
+                    try:
+                        for path in (output, self._job_file(job_id), self._job_file(job_id).with_suffix(".tmp")):
+                            path.unlink(missing_ok=True)
+                        output.parent.rmdir()
+                    except OSError:
+                        detail("Could not remove an unfinished dialogue result", exc_info=True)
+                raise
+            return clone(job)
 
     def adopt_version(self, payload):
         version = self.version(payload["version"])
@@ -3101,6 +3232,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, STATE.adopt_version(self._payload()))
             if path == "/api/studio/export":
                 return self._json(201, STATE.export_work(self._payload()))
+            if path == "/api/studio/reassemble-dialogue":
+                return self._json(201, STATE.reassemble_dialogue(self._payload()))
             if path == "/api/transcriptions":
                 return self._json(202, STATE.start_transcription(self._payload()))
             if path == "/api/model/inspect":

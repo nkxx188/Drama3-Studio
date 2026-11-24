@@ -48,7 +48,7 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
       await page.waitForFunction(() => document.querySelector('#audio-edit-source')?.duration > 0);
       await page.locator(`#audio-edit-workspace [data-edit-mode="${mode}"]`).click();
     };
-    const finish = async (selector = '#audio-edit-submit', duringRun = null) => {
+    const finish = async (selector = '#audio-edit-submit', duringRun = null, keepOpen = false) => {
       const previous = await page.evaluate(() => StudioFlow.flow.lastSubmit?.id || '');
       const editing = selector === '#audio-edit-submit';
       const originalId = await page.locator('#result-box').getAttribute('data-job-id');
@@ -75,7 +75,7 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
             && await page.locator('#audio-edit-workspace .audio-edit-source .player-region-handle.region-end').isEnabled()
             && !await page.locator('#audio-edit-source').evaluate(audio => audio.hasAttribute('data-selection-locked')));
         }
-        await close();
+        if (!keepOpen) await close();
       }
       (report.requests ||= []).push({ id: result.id, status: result.status, text: result.recipe.text,
         source_version: result.recipe.source_version, operation: result.recipe.operation, infill: result.result?.infill });
@@ -374,9 +374,29 @@ const report = { scope: 'Dedicated audio-edit page, fixed edit dock, explicit sn
       studio: { work_id: 'editor-lines', segment_id: 'dialogue', layout: 'scene' } });
     await open(perLine.id, 'local', 1); await select(.3, .6); await page.locator('#audio-edit-quote').fill('准备好了');
     await replacement().fill('还没好');
-    const changedLine = await finish();
+    const changedLine = await finish(undefined, null, true);
     check('per_line_local_edit_preserves_speaker_and_line_identity', changedLine.recipe.text.includes('<|speaker:1|>')
       && changedLine.recipe.text.includes('还没好。') && changedLine.studio.line_id === 'two');
+    check('completed_per_line_edit_offers_reassemble',
+      await page.locator('#audio-edit-reassemble').isVisible()
+      && (await page.locator('#audio-edit-reassemble').textContent()).includes('替换并重新拼接'));
+    await page.locator('#audio-edit-reassemble').click();
+    await page.waitForFunction(id => document.documentElement.dataset.view === 'scene'
+      && document.querySelector('#result-box').dataset.jobId !== id
+      && document.querySelectorAll('#result-box .segment-item').length === 2, perLine.id);
+    const firstComposition = await page.evaluate(() => state.resultJobs.scene);
+    check('reassembly_returns_to_the_complete_dialogue_result',
+      firstComposition?.mode === 'scene' && firstComposition.status === 'complete'
+      && firstComposition.result.segments[1].text.includes('还没好。')
+      && firstComposition.result.segments[1].source_version.job_id === changedLine.id);
+    await page.reload(); await ready();
+    check('reassembled_dialogue_remains_the_active_result_after_reload',
+      await page.locator('#view-scene').isVisible()
+      && await page.locator('#result-box').getAttribute('data-job-id') === firstComposition.id
+      && await page.locator('#result-box .main-result .download-link').isVisible());
+    await open(firstComposition.id, 'whole', 1);
+    check('the_replaced_line_is_editable_with_its_new_text',
+      await page.inputValue('#audio-edit-whole-0') === '还没好。');
     const legacyRoute = async route => {
       if (route.request().postDataJSON().job_id !== first.id) return route.continue();
       const response = await route.fetch(), value = await response.json(); value.complete_recipe = false;
