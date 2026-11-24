@@ -32,7 +32,7 @@ fi
 
 if [ ! -f "$ROOT/runtime/native/drama3_worker" ]; then
     echo "[drama3] warning: runtime/native/drama3_worker is missing." >&2
-    echo "[drama3]          run tools/build_linux_runtime.py and rebuild the image." >&2
+    echo "[drama3]          run tools/build_linux_docker_runtime.py and rebuild the image." >&2
 fi
 
 if [ -z "$(find "$ROOT/checkpoints" -maxdepth 2 -name '*.gguf' -print -quit 2>/dev/null)" ]; then

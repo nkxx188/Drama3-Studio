@@ -47,8 +47,9 @@ def windows_tools():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build-dir", type=Path, default=ROOT / ".cache/native-build")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / ".cache/native")
+    folder = ROOT / ".cache" / ("native" if os.name == "nt" else "native-linux")
+    parser.add_argument("--build-dir", type=Path, default=folder.with_name(folder.name + "-build"))
+    parser.add_argument("--output-dir", type=Path, default=folder)
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
     if args.jobs < 1:

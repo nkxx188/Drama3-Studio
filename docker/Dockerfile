@@ -3,8 +3,8 @@
 # The build context is the repository root, so both the prepared upstream sources
 # and the compiled worker are available:
 #
-#   python tools/prepare_sources.py        # restore the pinned Fish Speech checkout
-#   python tools/build_linux_runtime.py    # -> runtime/native/drama3_worker
+#   python3 tools/prepare_sources.py
+#   python3 tools/build_linux_docker_runtime.py    # -> runtime/native-docker/drama3_worker
 #   docker compose -f docker/compose.yaml up -d --build
 #
 # The worker is compiled on the host because it needs a CUDA toolkit; the image only
@@ -57,7 +57,15 @@ RUN /opt/venv/bin/pip install --no-cache-dir --timeout 60 --retries 5 \
     && rm -f /tmp/requirements-linux.txt
 
 WORKDIR /app
-COPY . /app/
+COPY src/ ./src/
+COPY ui/ ./ui/
+COPY vendor/fish-speech/ ./vendor/fish-speech/
+COPY drama3-mcp/ ./drama3-mcp/
+COPY tools/windows_launcher.py ./tools/
+COPY docker/entrypoint.sh ./docker/
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
+COPY licenses/ ./licenses/
+COPY runtime/native-docker/ ./runtime/native/
 
 RUN chmod +x /app/docker/entrypoint.sh /app/runtime/native/drama3_worker \
     && mkdir -p /app/checkpoints /app/ui_data /app/diagnostics /app/.cache

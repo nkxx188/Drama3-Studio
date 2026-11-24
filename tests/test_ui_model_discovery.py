@@ -108,13 +108,14 @@ def test_moved_portable_rebinds_stale_absolute_checkpoint_paths_without_rewritin
     assert json.loads(state.settings_file.read_text(encoding="utf-8")) == saved_settings
 
 
+@pytest.mark.parametrize("external_directory", ["ComfyUI", "Drama3-Shared"])
 def test_missing_external_checkpoint_is_not_rebound_to_a_same_named_portable_model(
-        tmp_path, make_state):
+        tmp_path, make_state, external_directory):
     source = tmp_path / "source checkout"
     mark_application(source)
     portable = source / "dist/Drama3 Windows NVIDIA"
     local_model = python_model(portable / "checkpoints", "drama-3")
-    external_model = tmp_path / "ComfyUI/checkpoints/drama-3"
+    external_model = tmp_path / external_directory / "checkpoints/drama-3"
     state = make_state(portable, settings={"checkpoint": str(external_model)})
 
     assert state.checkpoint == external_model

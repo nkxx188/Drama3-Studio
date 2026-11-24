@@ -1,5 +1,6 @@
 # Local runtimes, environments and build products
 .venv/
+.venv-linux/
 venv/
 __pycache__/
 *.py[cod]
@@ -57,6 +58,7 @@ node_modules/
 !/docs/development.md
 !/docs/release-preparation.md
 !/docs/linux-docker.md
+!/docs/linux.md
 /tools/benchmark_comfy_models.py
 /tools/collect_comfy_comparisons.py
 /tools/download_phase19_models.py

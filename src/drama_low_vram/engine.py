@@ -1,4 +1,4 @@
-"""A reusable native-Windows execution engine for official Drama 3 weights."""
+"""A reusable native CUDA execution engine for official Drama 3 weights."""
 
 from __future__ import annotations
 
@@ -294,7 +294,7 @@ class DramaEngine:
             from .nvidia_policy import policy_for
             self.hardware_policy = policy_for(hardware.compute_capability or (0, 0))
             if not self.hardware_policy.supported:
-                raise RuntimeError("The Windows NVIDIA runtime requires an RTX20/SM75 or newer CUDA GPU")
+                raise RuntimeError("The NVIDIA runtime requires an RTX20/SM75 or newer CUDA GPU")
             if self.options.cpu_experts and not self.hardware_policy.experimental_hybrid:
                 raise ValueError("CPU expert cooperation is currently validated only on SM89; set cpu_experts=0")
             estimated_staging = self.options.staged_experts or 4

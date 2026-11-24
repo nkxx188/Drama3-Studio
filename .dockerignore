@@ -1,10 +1,17 @@
 .git
 .github
 .cache
+.venv
+.venv-linux
 checkpoints
 ui_data
 diagnostics
 outputs
 dist
+runtime/native
+runtime/native-linux
+runtime/python
+**/.git
 **/__pycache__
+**/node_modules
 *.pyc

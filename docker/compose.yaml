@@ -1,7 +1,7 @@
 # Drama 3 Studio on Linux, GPU reserved through the NVIDIA container toolkit.
 #
-#   python tools/prepare_sources.py
-#   python tools/build_linux_runtime.py
+#   python3 tools/prepare_sources.py
+#   python3 tools/build_linux_docker_runtime.py
 #   docker compose -f docker/compose.yaml up -d --build
 #
 # Requires the NVIDIA driver and nvidia-container-toolkit on the host. Models stay

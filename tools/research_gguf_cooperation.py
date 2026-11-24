@@ -89,7 +89,7 @@ def capture(args, build, out):
     with (out / "native.log").open("wb") as log:
         result = subprocess.run(
             command, cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT,
-            timeout=240, creationflags=subprocess.CREATE_NO_WINDOW,
+            timeout=240, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     save(out / "run.json", {
         "command": command, "returncode": result.returncode,
@@ -190,7 +190,7 @@ def replay(args, build, out):
     with (out / "replay.log").open("wb") as log:
         result = subprocess.run(
             command, cwd=build["source"], env=env, stdout=log, stderr=subprocess.STDOUT,
-            timeout=args.timeout, creationflags=subprocess.CREATE_NO_WINDOW,
+            timeout=args.timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     save(out / "replay-run.json", {
         "command": command, "returncode": result.returncode, "elapsed_seconds": time.perf_counter() - started,

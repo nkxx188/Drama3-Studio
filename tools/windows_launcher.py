@@ -1,4 +1,8 @@
-"""One Windows entry point: open Studio, reuse its server and keep failures visible."""
+"""One portable entry point: open Studio, reuse its server and keep failures visible.
+
+Kept under the original filename so the Windows launcher and its acceptance
+tests continue to work unchanged; ``start.sh`` uses this same module on Linux.
+"""
 
 import argparse
 from contextlib import contextmanager
@@ -28,9 +32,14 @@ def instance_key(root):
 
 
 def configure_environment():
-    for key, name in (("TEMP", "tmp"), ("TMP", "tmp"), ("HF_HOME", "huggingface"),
-                      ("TRITON_CACHE_DIR", "triton"), ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
-                      ("TORCH_EXTENSIONS_DIR", "torch_extensions"), ("CUDA_CACHE_PATH", "cuda")):
+    caches = (
+        ("TEMP", "tmp"), ("TMP", "tmp"), ("HF_HOME", "huggingface"),
+        ("TRITON_CACHE_DIR", "triton"), ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
+        ("TORCH_EXTENSIONS_DIR", "torch_extensions"), ("CUDA_CACHE_PATH", "cuda"),
+    )
+    if os.name != "nt":
+        caches += (("TMPDIR", "tmp"),)
+    for key, name in caches:
         folder = ROOT / ".cache" / name
         folder.mkdir(parents=True, exist_ok=True)
         os.environ[key] = str(folder)
@@ -264,6 +273,11 @@ if __name__ == "__main__":
             traceback.print_exc()
         print(f"Startup failed: {type(error).__name__}: {error}", file=sys.stderr)
         if isinstance(error, ModuleNotFoundError):
-            print("The Python runtime is incomplete. Re-extract the complete Windows package.", file=sys.stderr)
+            if os.name == "nt":
+                print("The Python runtime is incomplete. Re-extract the complete Windows package.",
+                      file=sys.stderr)
+            else:
+                print("The Python runtime is incomplete. Run tools/setup-linux.sh "
+                      "(see docs/linux.md).", file=sys.stderr)
         print(f"Details: {ROOT / 'diagnostics/launcher-error.log'}", file=sys.stderr)
         raise SystemExit(1)

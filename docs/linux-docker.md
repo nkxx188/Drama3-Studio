@@ -1,6 +1,6 @@
 # Linux 与 Docker 部署
 
-Windows 一键包仍是首选路径。本页给出在 Linux 上用容器运行同一份源码、同一个原生 worker 的方法，适用于服务器、常开机器或需要多人经局域网访问的场景。
+本页介绍 `linux-preview` 的 Docker 部署方式，适用于使用 Compose 管理服务的 Linux 主机。直接在 Linux 上安装 Studio 的步骤见 [Linux 原生安装](linux.md)。
 
 应用层没有平台分支：`src/drama_low_vram/`、`ui/` 和 `drama3-mcp/` 与 Windows 包完全相同，差异只在原生 worker 的编译方式和启动入口。
 
@@ -9,8 +9,8 @@ Windows 一键包仍是首选路径。本页给出在 Linux 上用容器运行�
 | Windows | Linux |
 | --- | --- |
 | `start.bat` | `docker/entrypoint.sh` |
-| `tools/build_windows_runtime.py` → `runtime/native/drama3_worker.exe` | `tools/build_linux_runtime.py` → `runtime/native/drama3_worker` |
-| `runtime/native/manifest.json`（`platform: windows-x86_64`） | 同一文件，`platform: linux-x86_64` |
+| `tools/build_windows_runtime.py` → `runtime/native/drama3_worker.exe` | `tools/build_linux_docker_runtime.py` → `runtime/native-docker/drama3_worker` |
+| `runtime/native/manifest.json`（`platform: windows-x86_64`） | 宿主机的 `runtime/native-docker/manifest.json`，构建镜像时复制到容器的 `/app/runtime/native/` |
 | 包内自带 CUDA 运行库 DLL | torch 的 `nvidia-*-cu12` 轮子，由入口脚本拼 `LD_LIBRARY_PATH` |
 
 `manifest.json` 的其余字段（`protocol`、`features`、`sha256`）保持一致，应用据此加载 worker，无需区分平台。
@@ -19,6 +19,7 @@ Windows 一键包仍是首选路径。本页给出在 Linux 上用容器运行�
 
 - Linux x86_64 宿主机，已装 NVIDIA 驱动与 `nvidia-container-toolkit`
 - Docker 与 Docker Compose v2
+- Git 和支持 `hashlib.file_digest` 的 Python 3.11 或更新版本，用于在宿主机构建
 - 编译 worker 需要：C++17 编译器、CMake、Ninja、CUDA Toolkit 12.8 或 12.9（仅构建机需要，运行镜像不含 SDK）
 
 ## 三步
@@ -28,10 +29,10 @@ git clone --branch linux-preview https://github.com/nkxx188/Drama3-Studio.git
 cd Drama3-Studio
 
 # 1. 还原固定提交的 Fish Speech，并应用仓库内校验过的补丁
-python tools/prepare_sources.py
+python3 tools/prepare_sources.py
 
-# 2. 编译 Linux 原生 worker -> runtime/native/drama3_worker
-python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda --jobs 6
+# 2. 编译 CUDA 12 worker -> runtime/native-docker/drama3_worker
+python3 tools/build_linux_docker_runtime.py --cuda-toolkit /usr/local/cuda-12.9 --jobs 6
 
 # 3. 构建镜像并启动
 mkdir -p checkpoints
@@ -39,6 +40,8 @@ docker compose -f docker/compose.yaml up -d --build
 ```
 
 默认监听 `http://<服务器IP>:8879/`。首次加载模型较慢属正常。
+
+从早期 Docker 预览版更新时，按上面的命令重新生成 `runtime/native-docker` 并重建镜像。
 
 `--architectures` 决定编译哪些 SM 目标，默认 `89`（RTX 40 系 / Ada）。需要覆盖多代显卡时按 CMake 语法传入，例如 `--architectures "75;86;89;120"`；目标越多编译越久。
 
@@ -66,7 +69,7 @@ docker compose -f docker/compose.yaml up -d --build
 docker build --build-arg RUNTIME_IMAGE=ubuntu:24.04 -f docker/Dockerfile .
 ```
 
-**glibc 2.43 与 nvcc 的头文件冲突。** 该版本按 C23 给 `rsqrtf` 等数学函数加了 `noexcept(true)`，与 nvcc 的 `__device__` 重声明冲突，device 编译阶段直接报异常规格不匹配。`build_linux_runtime.py` 检测到该守卫时，会把 `bits/mathcalls.h` 复制到 `.cache/sysinclude/` 并把对应 `#if` 改成 `#if 0`，再通过 `CMAKE_CUDA_FLAGS` 注入；系统头文件不动，旧 glibc 上该分支自动跳过。
+**glibc 2.43 与 nvcc 的头文件冲突。** 该版本按 C23 给 `rsqrtf` 等数学函数加了 `noexcept(true)`，与 nvcc 的 `__device__` 重声明冲突。`build_linux_docker_runtime.py` 会按需把 `bits/mathcalls.h` 复制到 `.cache/sysinclude/`，调整对应的条件编译指令后通过 `CMAKE_CUDA_FLAGS` 注入。
 
 **GPU 独占。** 24 GB 级 GGUF 模型常驻显存约 5~10 GB，峰值宿主内存较高。与 ComfyUI 一类常驻工作流同机时，先停一边再跑另一边，否则容易在对方跑批时爆显存。
 
@@ -93,7 +96,7 @@ docker build --build-arg RUNTIME_IMAGE=ubuntu:24.04 -f docker/Dockerfile .
 | 现象 | 处理 |
 | --- | --- |
 | 启动即报 `libcublas.so.12: cannot open shared object file` | 入口脚本未生效或 torch 未装进 `/opt/venv`；`docker compose logs` 看 `[drama3]` 前缀行 |
-| `worker exited` / `protocol mismatch` | worker 与 `manifest.json` 不匹配，重跑 `tools/build_linux_runtime.py` |
+| `worker exited` / `protocol mismatch` | 用 `tools/build_linux_docker_runtime.py` 重新构建 worker 和清单，再重建镜像 |
 | 页面报 `crypto.randomUUID is not a function` | `ui/index.html` 的安全上下文兜底被覆盖；确认镜像用的是仓库版本 |
 | 生成时 OOM | 先停掉同机其他 GPU 任务；必要时降低 `checkpoints` 里模型的量化档位 |
 | `nvidia-smi` 在容器内不存在 | compose 的 `deploy.resources.reservations.devices` 未生效，检查 toolkit 安装 |

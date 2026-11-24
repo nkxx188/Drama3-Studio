@@ -9,7 +9,7 @@ import zipfile
 import psutil
 
 from .nvidia_policy import policy_for
-from .runtime_files import load_native_runtime
+from .runtime_files import find_native_manifest, load_native_runtime
 
 
 def snapshot(root, *, native=True, deep=False):
@@ -72,8 +72,8 @@ def export(root, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("diagnostics.json", json.dumps(snapshot(root), ensure_ascii=False, indent=2))
-        manifest = root / "runtime/native/manifest.json"
-        if manifest.is_file():
+        manifest = find_native_manifest(root)
+        if manifest is not None:
             archive.write(manifest, "native-manifest.json")
         launch_error = root / "diagnostics/launcher-error.log"
         if launch_error.is_file():

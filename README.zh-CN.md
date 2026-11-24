@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-**在 Windows 本地使用 Fish Audio Drama 3，完成语音生成、声音克隆、多人对话和音频编辑。**
+**在本地使用 Fish Audio Drama 3，完成语音生成、声音克隆、多人对话和音频编辑。**
 
 Built with Fish Audio.
 
@@ -86,13 +86,23 @@ Drama3 Studio/
 
 启动窗口显示服务和任务状态；详细日志保存在 `diagnostics`。遇到问题时，可在设置页导出诊断日志，或在终端执行 `start.bat --diagnostics`。
 
+## Linux 预览
+
+`linux-preview` 分支提供 NVIDIA 显卡的原生安装方式。准备好 Python 3.12、CMake、Ninja、C++ 编译器和 CUDA 13.x Toolkit 后，在仓库根目录运行以下命令。
+
+```bash
+bash tools/setup-linux.sh
+.venv-linux/bin/python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda-13.2
+./start.sh
+```
+
+原生构建的 worker 和 CUDA 动态库放在 `runtime/native-linux`。依赖和验证步骤见 [Linux 原生安装指南](docs/linux.md)。容器运行方式见 [Docker 部署指南](docs/linux-docker.md)。
+
 ## 从源码运行与构建
 
 GitHub 仓库提供程序源码、前端资源、依赖版本、上游补丁及构建脚本，**不包含完整模型权重、Python 运行环境、CUDA 二进制库或用户音频**。仓库保留一个约 4 KiB 的任务控制输出行，供部分量化版本配套使用，其来源和许可见 [NOTICE](NOTICE)。
 
 源码运行与打包步骤见 [开发与构建](docs/development.md)。仅下载 GitHub 的 Source code ZIP 并不能直接获得完整的一键包。
-
-Linux 宿主可用容器运行同一份源码、同一个原生 worker，见 [Linux 与 Docker 部署](docs/linux-docker.md)。
 
 ## 项目与作者
 

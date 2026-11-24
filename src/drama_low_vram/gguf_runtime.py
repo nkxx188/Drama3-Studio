@@ -65,7 +65,15 @@ def build_environment(build, root=ROOT):
     temp = root / ".cache/tmp"
     temp.mkdir(parents=True, exist_ok=True)
     env.update(TEMP=str(temp), TMP=str(temp))
-    env["PATH"] = build.get("dll_directory", str(Path(build["cuda_toolkit"]) / "bin")) + os.pathsep + env.get("PATH", "")
+    if os.name != "nt":
+        env["TMPDIR"] = str(temp)
+    library_dir = build.get("dll_directory", str(Path(build["cuda_toolkit"]) / "bin"))
+    env["PATH"] = library_dir + os.pathsep + env.get("PATH", "")
+    if os.name != "nt":
+        # Linux does not search PATH for shared objects. The bundled CUDA
+        # runtime must be discoverable without a system-wide CUDA install.
+        existing = env.get("LD_LIBRARY_PATH")
+        env["LD_LIBRARY_PATH"] = library_dir + (os.pathsep + existing if existing else "")
     for key in (*DIAGNOSTICS, "DRAMA_HOST_GGUF_EMBEDDING", "DRAMA_COMPACT_GGUF_HEAD"):
         env.pop(key, None)
     return env
@@ -84,7 +92,7 @@ def native_memory(build, root=ROOT):
             detail = f"No compiled RTX target matches the detected GPU(s): {names}. " + detail
         raise RuntimeError(
             f"Native CUDA startup failed (exit {result.returncode}). Check the NVIDIA driver, "
-            "runtime DLLs and supported GPU. " + detail)
+            "native runtime libraries and supported GPU. " + detail)
     return rows[-1]
 
 

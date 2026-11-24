@@ -94,7 +94,7 @@ def main():
     with log_path.open("wb") as log:
         process = subprocess.Popen(command, cwd=build["source"], env=environment,
                                    stdout=log, stderr=subprocess.STDOUT,
-                                   creationflags=subprocess.CREATE_NO_WINDOW)
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         observed = psutil.Process(process.pid)
         while process.poll() is None:
             elapsed = time.perf_counter() - started

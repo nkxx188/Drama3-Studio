@@ -1,4 +1,4 @@
-"""Local Windows interface for the validated Drama 3 engine.
+"""Local Web UI for the validated Drama 3 engine.
 
 The server is deliberately dependency-light: Python's standard library serves
 the UI and serializes GPU jobs, while the existing engine remains the only
@@ -47,6 +47,8 @@ for key, folder in (
     target = ROOT / ".cache" / folder
     target.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault(key, str(target))
+if os.name != "nt":
+    os.environ.setdefault("TMPDIR", str(ROOT / ".cache/tmp"))
 
 from drama_low_vram.autotune import inspect_hardware  # noqa: E402
 from drama_low_vram.audio_stream import AudioStreamSession  # noqa: E402

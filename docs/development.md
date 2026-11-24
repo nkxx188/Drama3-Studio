@@ -1,6 +1,6 @@
 # 开发与构建
 
-本页面向需要修改源码或重新构建一键包的开发者。普通使用者请使用完整的 Windows NVIDIA 一键包。Linux 宿主的容器部署见 [Linux 与 Docker](linux-docker.md)。
+本页面向需要修改源码或重新构建运行包的开发者。Windows 用户可使用完整的一键包。Linux 用户可参考[原生安装](linux.md)或 [Docker 部署](linux-docker.md)。
 
 ## 目录
 
@@ -14,6 +14,7 @@
 | `tools/` | 启动、构建、打包和开发检查脚本 |
 | `tests/` | 单元与集成测试 |
 | `requirements-windows.lock.txt` | 已验证 Windows Python 环境的依赖版本 |
+| `requirements-linux.lock.txt` | 已验证 Linux Python 环境的依赖版本（使用上游 triton） |
 
 `vendor`、`runtime`、`checkpoints`、`dist`、缓存、研究输出和用户数据不提交到 Git。`src/drama_low_vram/data/control-head.safetensors` 是下载器需要的 4 KiB 配套数据，作为特例保留，并由 CI 校验 SHA256；完整模型权重仍排除。
 
@@ -75,6 +76,12 @@ cd ..\..
 ```powershell
 .\.venv\Scripts\python.exe tools\build_native.py
 ```
+
+## 构建 Linux NVIDIA 原生运行库
+
+原生安装从固定提交构建 `drama3_worker`，将 ELF、CUDA 动态库和 `manifest-linux.json` 放到 `runtime/native-linux`，再用 `--probe` 检查 GPU。安装和验证步骤见 [Linux 指南](linux.md)。
+
+Docker 部署使用 `tools/build_linux_docker_runtime.py`，将 CUDA 12 构建产物放在 `runtime/native-docker`。镜像沿用容器里的 CUDA 12 Python 依赖。详细步骤见 [Docker 指南](linux-docker.md)。
 
 ## 打包 Windows 一键包
 

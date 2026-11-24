@@ -36,7 +36,8 @@ def default_library_path():
     filename = "drama_native.dll" if os.name == "nt" else "libdrama_native.so"
     root = Path(__file__).resolve().parents[2]
     packaged = root / "runtime/native" / filename
-    return packaged if packaged.is_file() else root / ".cache/native" / filename
+    cache = ".cache/native" if os.name == "nt" else ".cache/native-linux"
+    return packaged if packaged.is_file() else root / cache / filename
 
 
 def _pointer(tensor):

@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**Run Fish Audio Drama 3 locally on Windows for speech generation, voice cloning, multi-speaker dialogue, and audio editing.**
+**Run Fish Audio Drama 3 locally for speech generation, voice cloning, multi-speaker dialogue, and audio editing.**
 
 Built with Fish Audio.
 
@@ -86,13 +86,23 @@ Models, voices, drafts, generation history, and caches are stored locally. Befor
 
 The launcher window shows service and task status; detailed logs are stored under `diagnostics`. For troubleshooting, export diagnostics from Settings or run `start.bat --diagnostics` in a terminal.
 
+## Linux Preview
+
+The `linux-preview` branch includes a native installation for NVIDIA GPUs. With Python 3.12, CMake, Ninja, a C++ compiler and a CUDA 13.x toolkit installed, run these commands from the checkout.
+
+```bash
+bash tools/setup-linux.sh
+.venv-linux/bin/python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda-13.2
+./start.sh
+```
+
+The native build puts its worker and CUDA libraries in `runtime/native-linux`. See the [native Linux guide (Chinese)](docs/linux.md) for dependencies and verification steps, or the [Docker guide (Chinese)](docs/linux-docker.md) for container deployment.
+
 ## Run from Source and Build
 
 The repository contains application source, frontend assets, dependency versions, upstream patches, and build scripts. It **does not include complete model weights, a Python runtime, CUDA binaries, or user audio**. A roughly 4 KiB task-control output row is retained as a supporting file for some quantized variants; see [NOTICE](NOTICE) for its source and license.
 
 See the [development and build guide (Chinese)](docs/development.md) for source setup and packaging instructions. GitHub's **Source code** ZIP is not the complete, ready-to-run portable package.
-
-Linux hosts run the same sources, with the same worker, inside a container: see the [Linux and Docker guide (Chinese)](docs/linux-docker.md).
 
 ## Project and Author
 

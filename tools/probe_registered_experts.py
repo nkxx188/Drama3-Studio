@@ -17,6 +17,23 @@ from drama_low_vram.offload import EXPERT_BUFFER_NAMES, ExpertStore, OffloadStat
 from drama_low_vram.native_backend import NativeLibrary
 
 
+def _cuda_runtime_library():
+    """Resolve the CUDA runtime shipped with torch on either platform."""
+    folder = Path(torch.__file__).resolve().parent / "lib"
+    names = (["cudart64_12.dll"] if sys.platform == "win32"
+             else ["libcudart.so.12", "libcudart.so"])
+    for name in names:
+        candidate = folder / name
+        if candidate.is_file():
+            return str(candidate)
+    if sys.platform != "win32":
+        from ctypes.util import find_library
+        found = find_library("cudart")
+        if found:
+            return found
+    raise FileNotFoundError("CUDA runtime library not found next to the torch package")
+
+
 def merged_regions(store, ids):
     regions = []
     for name in EXPERT_BUFFER_NAMES:
@@ -38,7 +55,7 @@ def merged_regions(store, ids):
 @torch.inference_mode()
 def main():
     torch.set_num_threads(1)
-    runtime = ctypes.CDLL(str(Path(torch.__file__).parent / "lib/cudart64_12.dll"))
+    runtime = ctypes.CDLL(_cuda_runtime_library())
     runtime.cudaHostRegister.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint]
     runtime.cudaHostRegister.restype = ctypes.c_int
     runtime.cudaHostUnregister.argtypes = [ctypes.c_void_p]

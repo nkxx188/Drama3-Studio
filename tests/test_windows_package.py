@@ -127,6 +127,8 @@ def test_refresh_retires_extra_launchers_preserves_data_and_copies_current_app(t
     files = {
         "runtime/native/manifest.json": '{"protocol": 4}',
         "runtime/native/worker.exe": "current worker",
+        "runtime/native-linux/drama3_worker": "Linux worker",
+        "runtime/native-docker/drama3_worker": "Docker worker",
         "src/example.py": "current source",
         "ui/index.html": "current UI",
         "ui/drama3-fish-mark.svg": "<svg/>",
@@ -160,6 +162,7 @@ def test_refresh_retires_extra_launchers_preserves_data_and_copies_current_app(t
     for name in module.RETIRED_UI_ASSETS:
         assert not (package / name).exists()
     assert (package / "runtime/native/worker.exe").read_text() == "current worker"
+    assert {path.name for path in (package / "runtime").iterdir()} == {"native"}
     assert "Download a supported speech model from Studio Settings" in (
         package / "START-HERE.txt").read_text(encoding="utf-8")
     for name in ("README.md", "README.zh-CN.md", "docs/development.md", "docs/release-preparation.md",
