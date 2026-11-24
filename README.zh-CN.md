@@ -8,6 +8,10 @@ Built with Fish Audio.
 
 Drama 3 Studio 将模型推理、参考音频、剧本编辑和生成结果整理在同一个 WebUI 中，提供自带运行环境的 Windows NVIDIA 一键包。模型权重单独下载，日常使用无需配置 Python、Node.js 或 CUDA Toolkit。
 
+## Linux 预览
+
+`linux-preview` 分支为使用 NVIDIA 显卡的 Linux 用户提供原生安装和 Docker Compose 部署两种方式。[查看 Linux 预览分支](https://github.com/nkxx188/Drama3-Studio/blob/linux-preview/README.zh-CN.md)
+
 ## 功能
 
 - **语音生成与克隆**：上传参考音频，填写或修改对应文字，生成新的台词；也可从音色库选择已保存的声音。
@@ -100,6 +104,11 @@ GitHub 仓库提供程序源码、前端资源、依赖版本、上游补丁及�
 - [Fish Audio 官方服务](https://fish.audio/?fpr=nkxx188)
 - [YouTube · 关注作者](https://www.youtube.com/@nkxx-188)
 - [GitHub · 源码与反馈](https://github.com/nkxx188/Drama3-Studio)
+
+## Linux 适配贡献
+
+- `@ghdt5tdd` 提供了 Docker Compose 部署和容器所用的 CUDA 12 推理程序构建流程。[PR #4](https://github.com/nkxx188/Drama3-Studio/pull/4)
+- `@helloHub1212` 提供了 Linux 原生安装、启动脚本和 CUDA 推理程序构建流程。[PR #6](https://github.com/nkxx188/Drama3-Studio/pull/6)
 
 ## 上游与许可
 

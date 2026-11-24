@@ -8,6 +8,10 @@ Built with Fish Audio.
 
 Drama 3 Studio brings model inference, voice references, script editing, and generated audio into one WebUI. The Windows NVIDIA portable package includes its own runtime, so normal use requires no separate Python, Node.js, or CUDA Toolkit setup. Model weights are downloaded separately.
 
+## Linux Preview
+
+The `linux-preview` branch offers native installation and Docker Compose deployment for Linux systems with NVIDIA GPUs. [Open the Linux preview](https://github.com/nkxx188/Drama3-Studio/tree/linux-preview)
+
 ## Features
 
 - **Speech generation and cloning:** upload reference audio, enter or edit its transcript, and generate new lines; you can also choose a saved voice from the voice library.
@@ -100,6 +104,11 @@ Created by **nkxx188 / 那颗星星188**. If you find Studio useful, follow the 
 - [Fish Audio · Official service](https://fish.audio/?fpr=nkxx188)
 - [YouTube · Follow the author](https://www.youtube.com/@nkxx-188)
 - [GitHub · Source and feedback](https://github.com/nkxx188/Drama3-Studio)
+
+## Linux Contributions
+
+- `@ghdt5tdd` contributed Docker Compose deployment and the CUDA 12 worker build for the container. [PR #4](https://github.com/nkxx188/Drama3-Studio/pull/4)
+- `@helloHub1212` contributed the native Linux setup, launcher, and CUDA worker build. [PR #6](https://github.com/nkxx188/Drama3-Studio/pull/6)
 
 ## Credits and Licenses
 
