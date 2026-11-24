@@ -6,7 +6,26 @@
 
 Built with Fish Audio.
 
-Drama 3 Studio brings model inference, voice references, script editing, and generated audio into one WebUI. The Windows NVIDIA portable package includes its own runtime, so normal use requires no separate Python, Node.js, or CUDA Toolkit setup. Model weights are downloaded separately.
+Drama 3 Studio brings model inference, voice references, script editing, and generated audio into one WebUI. Model weights are downloaded separately. This branch is a community Linux preview; Windows users can follow the [main branch](https://github.com/nkxx188/Drama3-Studio/tree/main).
+
+## Linux NVIDIA Preview
+
+### Native Installation
+
+Requires Linux x86_64, an NVIDIA GPU and driver, AVX2, Python 3.12, CMake, Ninja, a C++ compiler, and CUDA Toolkit 13.x. Install the system packages in the [native Linux guide](docs/linux.md), then run from the repository root:
+
+```bash
+sudo apt install git build-essential cmake ninja-build ffmpeg libsndfile1 libgomp1
+bash tools/setup-linux.sh
+.venv-linux/bin/python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda-13.2
+./start.sh
+```
+
+Change the CUDA Toolkit path to the location containing `bin/nvcc`. The worker and CUDA libraries are kept in `runtime/native-linux/`. The PR author tested native startup and GGUF speech generation on Ubuntu 26.04 with an RTX 5070. Other GPUs and workflows still need validation.
+
+### Docker Deployment
+
+Use this route to manage Studio as a Compose service. Build the CUDA 12 worker on the Linux host before building the image. The PR author reported testing generation, cloning, ASR, dialogue, and MCP on Ubuntu 26.04 with an RTX 4090; the Dockerfile still needs a clean build and end-to-end verification. See the [Docker deployment guide](docs/linux-docker.md).
 
 ## Features
 
@@ -24,49 +43,13 @@ This is a third-party local application built around Fish Audio Drama 3. Speech 
 
 ## Windows Portable Package
 
-1. Download the [Windows NVIDIA portable package from Releases](https://github.com/nkxx188/Drama3-Studio/releases) and fully extract it to a writable local folder with enough free space. An SSD is recommended.
-2. Double-click **`start.bat`** to open Studio in your browser. Keep the launcher window open while using it.
-3. Go to **Settings → Download a model** and choose a model and source. Once downloaded, select it under **Available models** and click **Use this model**. If you already have a complete model, place it under `checkpoints` or add its existing folder.
-4. Select a model at the top of the page, upload reference audio or choose a voice from the library, enter your text, and generate.
+See the download and startup instructions on the main branch. [Windows portable package](https://github.com/nkxx188/Drama3-Studio/blob/main/README.md#windows-portable-package)
 
-The default address is `http://127.0.0.1:8879/`. If the port is occupied, the launcher automatically chooses another local port. Running the launcher again opens the existing instance of this installation.
+## Linux Model Setup and Operation
 
-For split archives named `.zip.001`, `.zip.002`, and so on, download **all volumes** into the same folder, then open `.zip.001` with **7-Zip** and extract the package. A complete, single-file ZIP can be extracted directly.
+### Download and Select a Model
 
-### Download Models
-
-Settings offers FP8 / BF16, INT4, INT8 ConvRot, W6A8, W4A8, and several GGUF variants. The downloader prepares the supporting files required by each variant and installs them under the portable package's `checkpoints` folder.
-
-- FP8 / BF16 and INT4 offer both Hugging Face and ModelScope sources, with an automatic speed-test option.
-- Other listed quantized variants currently offer Hugging Face only. Make sure your network or proxy can access the selected source. The UI shows which sources are available for each model.
-- The download panel shows connection, download, and verification status, along with progress, size, and speed. After an interruption or cancellation, choose the same model again to resume using previously completed chunks.
-
-When downloading manually or using models from another tool, preserve the directory structure and supporting files required by that variant. Whether a single model file works directly depends on its format and the availability of its supporting files.
-
-### Model Locations
-
-The default `checkpoints` folder is the only model location you need. Studio scans its subfolders automatically; you do not need to add each model directory individually.
-
-```text
-Drama3 Studio/
-├─ start.bat
-├─ checkpoints/
-│  ├─ model-a/
-│  └─ model-b/
-├─ runtime/
-└─ ...
-```
-
-If you already keep models elsewhere, add that folder under **Settings → Model locations**. Models from additional locations and the default folder appear in one shared list. Existing model files are not copied or moved. Check each model's instructions for its required supporting files.
-
-Supported formats include the original FP8 / BF16 model, INT4 / W4A16, INT8, W6A8, W4A8, and compatible GGUF models. Format, quantization, and system memory configuration affect speed, resource use, and generated audio.
-
-### Requirements
-
-- Windows x64, an NVIDIA GPU, an AVX2-capable CPU, and a compatible NVIDIA driver.
-- The portable package includes Python, the required Python dependencies, and CUDA runtime libraries.
-- The native backend includes compilation targets for RTX 20 / 30 / 40 / 50 series GPUs. Full hardware validation was performed on an **RTX 4070 Laptop GPU with 8 GB VRAM**; other hardware still needs validation.
-- RAM and storage requirements depend on the model. Low-VRAM operation keeps some model data in system RAM or memory-mapped files, so VRAM capacity alone does not determine the system requirements.
+Open **Settings → Download a model** to download a GGUF model, or place an existing one under `checkpoints/` with its required supporting files. Refresh the model list and select the model you want to use.
 
 ### Reference Audio and Transcription
 
@@ -82,21 +65,9 @@ When you are done generating for a while, click the plug icon to the left of Ref
 
 ### Updates and Troubleshooting
 
-Models, voices, drafts, generation history, and caches are stored locally. Before updating, back up your `checkpoints`, `ui_data`, and `outputs` folders, then follow the release instructions to update the application files.
+Back up `checkpoints/`, `ui_data/`, and `outputs/` before updating. After pulling the latest `linux-preview` changes, follow the installation guide for your setup to update dependencies and rebuild the worker.
 
-The launcher window shows service and task status; detailed logs are stored under `diagnostics`. For troubleshooting, export diagnostics from Settings or run `start.bat --diagnostics` in a terminal.
-
-## Linux Preview
-
-The `linux-preview` branch includes a native installation for NVIDIA GPUs. With Python 3.12, CMake, Ninja, a C++ compiler and a CUDA 13.x toolkit installed, run these commands from the checkout.
-
-```bash
-bash tools/setup-linux.sh
-.venv-linux/bin/python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda-13.2
-./start.sh
-```
-
-The native build puts its worker and CUDA libraries in `runtime/native-linux`. See the [native Linux guide (Chinese)](docs/linux.md) for dependencies and verification steps, or the [Docker guide (Chinese)](docs/linux-docker.md) for container deployment.
+The launcher shows service and task status, with detailed logs under `diagnostics/`. Export diagnostics from Settings or run `./start.sh doctor` for the native installation.
 
 ## Run from Source and Build
 
@@ -112,6 +83,11 @@ Created by **nkxx188 / 那颗星星188**. If you find Studio useful, follow the 
 - [Fish Audio · Official service](https://fish.audio/?fpr=nkxx188)
 - [YouTube · Follow the author](https://www.youtube.com/@nkxx-188)
 - [GitHub · Source and feedback](https://github.com/nkxx188/Drama3-Studio)
+
+## Linux Contributions
+
+- `@ghdt5tdd` contributed Docker Compose deployment and the CUDA 12 worker build for the container. [PR #4](https://github.com/nkxx188/Drama3-Studio/pull/4)
+- `@helloHub1212` contributed the native Linux setup, launcher, and CUDA worker build. [PR #6](https://github.com/nkxx188/Drama3-Studio/pull/6)
 
 ## Credits and Licenses
 

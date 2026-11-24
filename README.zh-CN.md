@@ -6,7 +6,26 @@
 
 Built with Fish Audio.
 
-Drama 3 Studio 将模型推理、参考音频、剧本编辑和生成结果整理在同一个 WebUI 中，提供自带运行环境的 Windows NVIDIA 一键包。模型权重单独下载，日常使用无需配置 Python、Node.js 或 CUDA Toolkit。
+Drama 3 Studio 将模型推理、参考音频、剧本编辑和生成结果整理在同一个 WebUI 中。模型权重单独下载。本分支为社区 Linux 预览版；Windows 用户请查看[主线](https://github.com/nkxx188/Drama3-Studio/tree/main)。
+
+## Linux NVIDIA 预览
+
+### 原生安装
+
+需要 Linux x86_64、NVIDIA 显卡和驱动、AVX2、Python 3.12、CMake、Ninja、C++ 编译器及 CUDA 13.x Toolkit。先按[原生安装指南](docs/linux.md)安装系统依赖，再在仓库根目录运行：
+
+```bash
+sudo apt install git build-essential cmake ninja-build ffmpeg libsndfile1 libgomp1
+bash tools/setup-linux.sh
+.venv-linux/bin/python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda-13.2
+./start.sh
+```
+
+请把 CUDA Toolkit 路径换成包含 `bin/nvcc` 的实际目录。原生 worker 和 CUDA 动态库保存在 `runtime/native-linux/`。PR 作者在 Ubuntu 26.04 和 RTX 5070 上验证了原生启动及 GGUF 语音生成。其他显卡和工作流仍需验证。
+
+### Docker 部署
+
+习惯用 Compose 管理服务时可选此方式。先在宿主机上构建 CUDA 12 推理程序，再构建镜像。PR 作者报告在 Ubuntu 26.04 和 RTX 4090 上测试了生成、克隆、转写、多人对话和 MCP；当前 Dockerfile 仍需从干净环境重新构建并端到端验证。依赖和数据持久化见 [Docker 部署指南](docs/linux-docker.md)。
 
 ## 功能
 
@@ -24,49 +43,13 @@ Drama 3 Studio 将模型推理、参考音频、剧本编辑和生成结果整�
 
 ## Windows 一键包
 
-1. 从 [Releases](https://github.com/nkxx188/Drama3-Studio/releases) 下载并完整解压 Windows NVIDIA 一键包，放在有写入权限、空间充足的本地目录，建议使用 SSD。
-2. 双击 **`start.bat`**，浏览器会打开 Studio。使用期间保持启动窗口开启。
-3. 打开 **设置 → 下载模型**，选择版本和渠道，下载完成后在“可用模型”中选择并点击“使用此模型”。已有完整模型时，也可直接放入 `checkpoints`，或添加其他模型文件夹。
-4. 在页面顶部选择模型，上传参考音频或从音色库选取，输入要生成的文本并生成。
+下载和启动步骤见主线的 [Windows 一键包说明](https://github.com/nkxx188/Drama3-Studio/blob/main/README.zh-CN.md#windows-一键包)。
 
-默认地址为 `http://127.0.0.1:8879/`。端口被占用时会自动选择其他本地端口；再次运行启动脚本会打开当前这份程序已有的页面。
+## Linux 模型设置与使用
 
-若发布文件采用 `.zip.001`、`.zip.002` 等分卷形式，请下载全部分卷放在同一文件夹，用 7-Zip 打开 `.zip.001` 并解压。完整的单文件 ZIP 则可直接解压。
+### 下载并选择模型
 
-### 下载模型
-
-设置页提供 FP8 / BF16、INT4、INT8 ConvRot、W6A8、W4A8 和多种 GGUF 版本。下载器会准备对应版本所需的配套文件，下载目标位于一键包的 `checkpoints` 中。
-
-- FP8 / BF16 和 INT4 提供 Hugging Face、魔搭 ModelScope 两种渠道，也可自动测速选择。
-- 其他列出的量化版本目前仅提供 Hugging Face 渠道，下载前需要确保当前网络或代理可以访问该渠道。渠道是否可选以界面显示为准。
-- 下载区显示连接、下载和校验状态，以及下载进度、大小和速度。中断或取消后，再次选择同一版本下载即可续传已完成的分块。
-
-手动下载或使用其他工具中已有的模型时，请保留该版本要求的目录结构和配套文件。单个模型文件能否直接使用，取决于其格式及配套文件是否完整。
-
-### 模型放在哪里
-
-默认只需要一键包内的一个 `checkpoints` 文件夹。程序会扫描其中的子目录，不必把每个模型目录逐个添加进去。
-
-```text
-Drama3 Studio/
-├─ start.bat
-├─ checkpoints/
-│  ├─ 模型 A/
-│  └─ 模型 B/
-├─ runtime/
-└─ ...
-```
-
-已经在其他工具中保存模型时，可在 **设置 → 模型位置** 添加那个文件夹。新增位置和默认目录共用同一个模型列表，不会复制或移动原有模型。不同格式需要的配套文件，以对应模型的说明为准。
-
-支持的模型格式包括原版 FP8 / BF16、INT4 / W4A16、INT8、W6A8、W4A8，以及兼容的 GGUF 模型。模型格式、量化方式和机器的内存配置都会影响速度、资源占用及生成表现。
-
-### 运行环境
-
-- Windows x64，NVIDIA 显卡，支持 AVX2 的处理器，以及与运行环境兼容的 NVIDIA 驱动。
-- 一键包包含 Python、所需 Python 依赖和 CUDA 运行库。
-- 原生后端包含面向 RTX 20 / 30 / 40 / 50 系列的编译目标；完整实机验证环境为 **RTX 4070 Laptop，8 GB 显存**，其他硬件仍需实际验证。
-- 内存和磁盘需求取决于模型。低显存运行会把部分模型数据放在内存或映射文件中，不能只根据显存容量估算整机需求。
+打开 **设置 → 下载模型** 下载 GGUF。也可以把已有的 GGUF 模型及其配套文件放到 `checkpoints/`。刷新模型列表并选择要用的模型。
 
 ### 参考音频与转写
 
@@ -82,21 +65,9 @@ Drama3 Studio/
 
 ### 更新与排查
 
-模型、音色、草稿、生成记录和缓存保存在本地。更新前备份自己的 `checkpoints`、`ui_data` 和 `outputs`，再按发布说明更新程序文件。
+更新前备份 `checkpoints/`、`ui_data/` 和 `outputs/`。拉取 `linux-preview` 的最新代码后，按所选安装方式的指南更新依赖并重新构建推理程序。
 
-启动窗口显示服务和任务状态；详细日志保存在 `diagnostics`。遇到问题时，可在设置页导出诊断日志，或在终端执行 `start.bat --diagnostics`。
-
-## Linux 预览
-
-`linux-preview` 分支提供 NVIDIA 显卡的原生安装方式。准备好 Python 3.12、CMake、Ninja、C++ 编译器和 CUDA 13.x Toolkit 后，在仓库根目录运行以下命令。
-
-```bash
-bash tools/setup-linux.sh
-.venv-linux/bin/python tools/build_linux_runtime.py --cuda-toolkit /usr/local/cuda-13.2
-./start.sh
-```
-
-原生构建的 worker 和 CUDA 动态库放在 `runtime/native-linux`。依赖和验证步骤见 [Linux 原生安装指南](docs/linux.md)。容器运行方式见 [Docker 部署指南](docs/linux-docker.md)。
+启动窗口显示服务和任务状态，详细日志保存在 `diagnostics/`。可在设置页导出诊断日志，原生安装也可在终端运行 `./start.sh doctor` 排查问题。
 
 ## 从源码运行与构建
 
@@ -112,6 +83,11 @@ GitHub 仓库提供程序源码、前端资源、依赖版本、上游补丁及�
 - [Fish Audio 官方服务](https://fish.audio/?fpr=nkxx188)
 - [YouTube · 关注作者](https://www.youtube.com/@nkxx-188)
 - [GitHub · 源码与反馈](https://github.com/nkxx188/Drama3-Studio)
+
+## Linux 适配贡献
+
+- `@ghdt5tdd` 提供了 Docker Compose 部署和容器所用的 CUDA 12 推理程序构建流程。[PR #4](https://github.com/nkxx188/Drama3-Studio/pull/4)
+- `@helloHub1212` 提供了 Linux 原生安装、启动脚本和 CUDA 推理程序构建流程。[PR #6](https://github.com/nkxx188/Drama3-Studio/pull/6)
 
 ## 上游与许可
 
