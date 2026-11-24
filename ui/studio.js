@@ -1936,6 +1936,11 @@
       enterEditor: returnView => view('audio-edit', { returnView }),
       leaveEditor: returnView => view(returnView),
       version: source => post('/api/studio/version', source),
+      completeDialogue: async job => {
+        state.resultJobs.scene = job;
+        await save();
+        loadJobs();
+      },
       submit: send,
     }, flow.data.drafts.audio_editor?.value);
     const savedVoice = flow.data.drafts.voice?.value;

@@ -118,16 +118,17 @@ class StudioStore:
                 self.data = before
                 raise
 
-    def register(self, job):
+    def register(self, job, *, adopt=False):
         context = job.get("studio")
         if not context:
             return
         work_id, segment_id = record_id(context["work_id"]), record_id(context["segment_id"])
         with self.lock:
-            work = self.data["works"].setdefault(work_id, {
+            previous = self.data["works"].get(work_id)
+            work = clone(previous) if previous is not None else {
                 "id": work_id, "created_at": time.time(), "segments": [],
                 "layout": context.get("layout", "single"), "title": job["recipe"].get("text", "")[:80],
-            })
+            }
             segment = next((row for row in work["segments"] if row["id"] == segment_id), None)
             if segment is None:
                 segment = {"id": segment_id, "versions": [], "adopted": None}
@@ -141,8 +142,19 @@ class StudioStore:
                     and job["recipe"].get("scene_strategy", "per_line") == "per_line"
                     and not context.get("line_id") and not segment.get("scene_version")):
                 segment["scene_version"] = {"job_id": job["id"]}
+            if adopt:
+                segment.pop("line_versions", None)
+                segment["adopted"] = {"job_id": job["id"]}
             work["updated_at"] = time.time()
-            self._save()
+            self.data["works"][work_id] = work
+            try:
+                self._save()
+            except OSError:
+                if previous is None:
+                    del self.data["works"][work_id]
+                else:
+                    self.data["works"][work_id] = previous
+                raise
 
     def first_completed(self, job):
         context = job.get("studio")

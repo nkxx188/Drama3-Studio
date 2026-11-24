@@ -73,7 +73,7 @@
       : returnViews.includes(hooks.currentView?.()) ? hooks.currentView()
         : returnViews.includes(active?.returnView) ? active.returnView : 'generate';
     if (active) {
-      if (JSON.stringify(active.source) === JSON.stringify(source) || active.busy) {
+      if (JSON.stringify(active.source) === JSON.stringify(source) || active.busy || active.composing) {
         hooks.rememberSource?.(active.source, active.returnView);
         hooks.enterEditor?.(active.returnView);
         active.element.scrollIntoView({ block: 'start', behavior: 'smooth' }); active.element.focus(); return;
@@ -299,6 +299,9 @@
     results.setAttribute('aria-labelledby', 'audio-edit-results-title');
     const resultHeading = el('div', 'audio-edit-results-heading'), resultTitle = label('h3', 'Edited result');
     resultTitle.id = 'audio-edit-results-title';
+    const reassemble = button('Replace line & reassemble', useEditedDialogueLine, 'primary-btn');
+    reassemble.id = 'audio-edit-reassemble';
+    reassemble.hidden = true;
     const resultStatus = el('div', 'audio-edit-results-status'), badge = el('span', 'badge');
     badge.id = 'audio-edit-result-badge';
     const cancel = button('Cancel', async () => {
@@ -331,6 +334,7 @@
       const job = context.result;
       if (!job) return;
       results.hidden = false; results.dataset.state = job.status;
+      reassemble.hidden = !version.can_reassemble_dialogue || job.status !== 'complete' || !job.output;
       badge.dataset.status = job.status; badge.textContent = statusLabel(job.status);
       const running = ['queued', 'running'].includes(job.status), timing = jobTiming(job);
       const phase = { model_load: 'Loading model', initialization: 'Initializing',
@@ -343,8 +347,34 @@
       cancel.hidden = !running; cancel.disabled = Boolean(job.cancel_requested);
       cancel.dataset.i18n = job.cancel_requested ? 'Cancelling…' : 'Cancel';
       cancel.textContent = t(cancel.dataset.i18n);
-      resultError.hidden = !jobIssue(job); resultError.textContent = jobIssue(job);
+      resultError.textContent = context.reassembleError || jobIssue(job);
+      resultError.hidden = !resultError.textContent;
       renderResults(job, resultBox);
+      if (!reassemble.hidden) {
+        const actions = resultBox.querySelector('.result-actions');
+        if (actions !== reassemble.parentElement) actions.prepend(reassemble);
+      }
+    }
+    async function useEditedDialogueLine() {
+      const job = context.result;
+      if (context.busy || context.composing || context.closing || reassemble.hidden) return;
+      context.composing = true; context.reassembleError = ''; drawResult(); refresh();
+      try {
+        await persist();
+        const composed = await api('/api/studio/reassemble-dialogue', {
+          method: 'POST', body: JSON.stringify({ job_id: job.id }),
+        });
+        await hooks.completeDialogue(composed);
+        if (workspace.isConnected) leaveEditor('scene');
+      } catch (issue) {
+        if (workspace.isConnected) {
+          context.reassembleError = message(issue.message);
+          drawResult();
+        }
+      } finally {
+        context.composing = false;
+        if (workspace.isConnected) refresh();
+      }
     }
     async function pollResult(id) {
       if (!workspace.isConnected || context.result?.id !== id) return;
@@ -369,20 +399,24 @@
     }
     function trackResult(job) {
       clearTimeout(context.pollTimer);
+      context.reassembleError = '';
       draft.result_job_id = job.id; context.result = job;
       context.busy = ['queued', 'running'].includes(job.status);
       drawResult(); refresh(); saveSoon(); pollResult(job.id);
     }
     async function closeEditor() {
-      if (context.closing || context.busy) return false;
+      if (context.closing || context.busy || context.composing) return false;
       context.closing = true;
       try {
-        await persist(); cleanup(); hooks.clearRememberedSource?.(); hooks.leaveEditor?.(returnView); return true;
+        await persist(); leaveEditor(returnView); return true;
       }
       catch (issue) { context.failure = message(issue.message); refresh(); return false; }
       finally { context.closing = false; }
     }
     context.close = closeEditor;
+    function leaveEditor(destination) {
+      cleanup(); hooks.clearRememberedSource?.(); hooks.leaveEditor?.(destination);
+    }
     function cleanup() {
       clearTimeout(context.pollTimer);
       workspace.querySelectorAll('audio').forEach(item => item.pause()); workspace.remove();
@@ -539,10 +573,15 @@
       const changedText = !textUnchanged();
       const unchanged = !local && !changedText && !draft.parameters.edited
         && draft.whole.direction === (recipe.direction || '');
-      submit.disabled = context.busy || context.preparing || modelBusy() || !supported || mismatch
+      const busy = context.busy || context.composing;
+      submit.disabled = busy || context.preparing || modelBusy() || !supported || mismatch
         || missing || empty || unchanged || local && (!range || isInsertion() && !draft.local.replacement.trim());
-      for (const item of [dismiss, insert, addLine, ...tabs.children]) item.disabled = context.busy;
-      workspace.setAttribute('aria-busy', String(context.busy));
+      for (const item of [dismiss, insert, addLine, reassemble, ...tabs.children]) {
+        item.disabled = busy;
+      }
+      workspace.setAttribute('aria-busy', String(busy));
+      reassemble.dataset.i18n = context.composing ? 'Reassembling dialogue…' : 'Replace line & reassemble';
+      reassemble.textContent = t(reassemble.dataset.i18n);
       for (const input of workspace.querySelectorAll('input, textarea, select, .audio-edit-match')) {
         if (input !== random) input.disabled = context.busy;
       }
